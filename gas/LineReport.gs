@@ -48,7 +48,7 @@ function getLineToken_() {
 
 /**
  * Gemini APIキー。
- * 一度だけ setGeminiKey_() をエディタから実行して保存する。
+ * メニュー「🤖 Geminiキーを設定」から保存する。
  */
 function getGeminiKey_() {
   return PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY") || "";
@@ -67,8 +67,8 @@ function getGeminiModel_() {
       || "gemini-3.1-flash-lite";
 }
 
-/** スクリプトエディタから実行してモデル名を変える */
-function setGeminiModel_() {
+/** メニューから実行してモデル名を変える */
+function menuSetGeminiModel() {
   const ui = SpreadsheetApp.getUi();
   const res = ui.prompt("Geminiのモデル名",
     "今: " + getGeminiModel_() + "\n\n例: gemini-3.1-flash-lite / gemini-3.5-flash",
@@ -80,8 +80,8 @@ function setGeminiModel_() {
   ui.alert("保存しました: " + v);
 }
 
-/** スクリプトエディタから1回だけ実行してキーを保存する */
-function setGeminiKey_() {
+/** メニューから実行してGeminiのキーを保存する */
+function menuSetGeminiKey() {
   const ui = SpreadsheetApp.getUi();
   const res = ui.prompt("Gemini APIキー", "APIキーを貼り付けてください。", ui.ButtonSet.OK_CANCEL);
   if (res.getSelectedButton() !== ui.Button.OK) return;
@@ -130,6 +130,34 @@ function getGridRange(sheet, startRow, startColIndex, rowCount, colSpanArray) {
     ranges.push(rng); currentC += colSpanArray[i];
   }
   return ranges;
+}
+
+/* ============ メニュー ============ */
+
+/**
+ * 「📊 レポート」メニューを足す。
+ *
+ * onOpen は1つのプロジェクトに1つしか置けない。統合スクリプト側に既に
+ * onOpen があるので、そちらは触らず、この関数を「起動時トリガー」から
+ * 呼んでもらう形にしている。
+ *   エディタ左の ⏰（トリガー）→「トリガーを追加」
+ *   → 実行する関数: onOpenReport
+ *   → イベントのソース: スプレッドシートから
+ *   → イベントの種類: 起動時
+ *
+ * 同じプロジェクトに Strategy.gs / Opucha.gs があれば、それも一緒に出す。
+ */
+function onOpenReport() {
+  const m = SpreadsheetApp.getUi().createMenu("📊 レポート");
+  m.addItem("📤 レポートを手動送信", "showReportDialog");
+  if (typeof menuStrategy === "function") m.addItem("🎯 立ち回り分析", "menuStrategy");
+  if (typeof menuOpucha === "function")   m.addItem("🏷 オプチャ印を付ける／外す", "menuOpucha");
+  if (typeof menuChartFit === "function") m.addItem("📐 グラフの大きさを揃える", "menuChartFit");
+  m.addSeparator();
+  m.addItem("👥 グループIDを設定", "menuSetGroupId");
+  m.addItem("🤖 Geminiキーを設定", "menuSetGeminiKey");
+  m.addItem("🤖 Geminiのモデルを変える", "menuSetGeminiModel");
+  m.addToUi();
 }
 
 /* ============ 期間（16日〜翌月15日） ============ */
@@ -515,7 +543,7 @@ function generateAIText(avgSales, count, waitAvg, timesArr) {
     // 「データが取得できませんでした」だけだと、モデル廃止なのかキー切れなのか分からない。
     const why = (json.error && json.error.message) ? json.error.message : body.slice(0, 120);
     if (code === 404) {
-      return "【モデル " + model + " が見つかりません】廃止された可能性。setGeminiModel_ で変更してください";
+      return "【モデル " + model + " が見つかりません】廃止された可能性。「Geminiのモデルを変える」で変更してください";
     }
     if (code === 400 || code === 403) {
       return "【APIキーの問題 " + code + "】" + why;

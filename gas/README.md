@@ -7,6 +7,7 @@
 | ファイル | 役割 | 状態 |
 |---|---|---|
 | `MapLink.gs` | G列の乗り場名 → Googleマップへのリンク | 実装済み |
+| `ChartFit.gs` | まとめスプシのグラフをZ列の幅にそろえる | 実装済み |
 | `Report.gs` | 自社実績／大物マップの2セクション集計 | **保留**（下記参照） |
 
 ---
@@ -145,6 +146,7 @@ J列は写し側だけ埋まることがあり当てにならないため、
 
 ```
 node gas/test/maplink.test.js
+node gas/test/chartfit.test.js
 node gas/test/report.test.js
 ```
 

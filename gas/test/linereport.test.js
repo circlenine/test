@@ -7,11 +7,19 @@ const ctx = { console };
 vm.createContext(ctx);
 const D = vm.runInContext('Date', ctx);
 vm.runInContext(fs.readFileSync(path.join(__dirname, 'gas-globals.js'), 'utf8'), ctx);
-// LineReport.gs のうち、シートに触れない部分だけを取り出して読み込む
-const src = fs.readFileSync(path.join(__dirname, '..', 'LineReport.gs'), 'utf8');
-const from = src.indexOf('const LR_DOW');
-const to = src.indexOf('/** 画面から呼ばれる。記録の一番古い営業日を調べて期間一覧を返す */');
-vm.runInContext(src.slice(from, to), ctx);
+
+// Gemini 呼び出しを差し替えられるようにしておく
+const props = { GEMINI_API_KEY: 'dummy-key' };
+let lastUrl = '', reply = { code: 200, body: '{}' };
+ctx.PropertiesService = { getScriptProperties: () => ({
+  getProperty: k => (k in props ? props[k] : null),
+  setProperty: (k, v) => { props[k] = v; }
+}) };
+ctx.UrlFetchApp = { fetch: (url) => { lastUrl = url; return {
+  getResponseCode: () => reply.code, getContentText: () => reply.body }; } };
+ctx.SpreadsheetApp = { getUi: () => ({}) };
+
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'LineReport.gs'), 'utf8'), ctx);
 
 let fail = 0;
 const eq = (a, b, msg) => {
@@ -65,6 +73,39 @@ eq(ny[1].value, '2025/11/16-2025/12/15', '  その前は 11/16〜12/15');
 const alt = ctx.lrAlt_(new D(2026, 7, 16)) + "～" + ctx.lrAlt_(new D(2026, 8, 1)) + "レポート作成 byシバンニ";
 eq(alt, '8/16(日)～9/1(火)レポート作成 byシバンニ', '裏メッセージの文面');
 eq(alt.length <= 400, true, 'LINEの altText 上限400文字に収まる');
+
+/* ---- Gemini（ダッシュボードの「傾向と対策」） ---- */
+// v185 は gemini-1.5-flash を叩いていたが、これは廃止済みで 404 が返る。
+// 全行が「【AI分析エラー】データが取得できませんでした」になっていた原因。
+eq(ctx.getGeminiModel_(), 'gemini-3.1-flash-lite', '既定のモデルは現行のもの');
+eq(ctx.getGeminiModel_().indexOf('1.5') === -1, true, '廃止済みの1.5系を使っていない');
+
+reply = { code: 200, body: JSON.stringify({ candidates: [{ content: { parts: [{ text: '新地4の23時台を狙う' }] } }] }) };
+eq(ctx.generateAIText(7500, 12, 20, ['23:10']), '新地4の23時台を狙う', '正常時は本文を返す');
+eq(lastUrl.indexOf('/models/gemini-3.1-flash-lite:generateContent') !== -1, true,
+   '  設定したモデルでURLを組み立てている');
+
+// 原因が分かるエラー文になっているか（v185は全部同じ文言だった）
+reply = { code: 404, body: JSON.stringify({ error: { message: 'models/gemini-1.5-flash is not found' } }) };
+eq(ctx.generateAIText(7500, 12, 20, []).indexOf('見つかりません') !== -1, true,
+   '404はモデル廃止と分かる文言を返す');
+
+reply = { code: 403, body: JSON.stringify({ error: { message: 'API key not valid' } }) };
+const e403 = ctx.generateAIText(7500, 12, 20, []);
+eq(e403.indexOf('APIキー') !== -1, true, '403はキーの問題と分かる');
+eq(e403.indexOf('API key not valid') !== -1, true, '  APIからの理由もそのまま出す');
+
+reply = { code: 429, body: '{}' };
+eq(ctx.generateAIText(7500, 12, 20, []).indexOf('回数制限') !== -1, true, '429は回数制限と分かる');
+
+eq(ctx.generateAIText(5000, 1, 0, []), 'データ不足のため判断保留。', '1件だけならAIを呼ばない');
+delete props.GEMINI_API_KEY;
+eq(ctx.generateAIText(7500, 12, 20, []).indexOf('AI未設定') !== -1, true, 'キー未設定なら呼ばずに知らせる');
+props.GEMINI_API_KEY = 'dummy-key';
+
+// モデル名は設定で差し替えられる（Googleが次々にモデルを止めるため）
+props.GEMINI_MODEL = 'gemini-3.5-flash';
+eq(ctx.getGeminiModel_(), 'gemini-3.5-flash', '設定でモデルを差し替えられる');
 
 console.log(fail ? `\n${fail} 件失敗` : '\n全テスト通過');
 process.exit(fail ? 1 : 0);

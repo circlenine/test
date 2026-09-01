@@ -54,6 +54,32 @@ function getGeminiKey_() {
   return PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY") || "";
 }
 
+/**
+ * 使うGeminiのモデル名。
+ * Googleは古いモデルを次々に止めるので、コードを触らず差し替えられるようにしておく。
+ * スクリプトプロパティ GEMINI_MODEL に入れると、そちらが優先される。
+ *
+ * ※v185 が使っていた gemini-1.5-flash は既に廃止済みで、呼ぶと 404 が返る。
+ *   ダッシュボードの「傾向と対策」が全行エラーになっていた原因はこれ。
+ */
+function getGeminiModel_() {
+  return PropertiesService.getScriptProperties().getProperty("GEMINI_MODEL")
+      || "gemini-3.1-flash-lite";
+}
+
+/** スクリプトエディタから実行してモデル名を変える */
+function setGeminiModel_() {
+  const ui = SpreadsheetApp.getUi();
+  const res = ui.prompt("Geminiのモデル名",
+    "今: " + getGeminiModel_() + "\n\n例: gemini-3.1-flash-lite / gemini-3.5-flash",
+    ui.ButtonSet.OK_CANCEL);
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+  const v = res.getResponseText().trim();
+  if (!v) return;
+  PropertiesService.getScriptProperties().setProperty("GEMINI_MODEL", v);
+  ui.alert("保存しました: " + v);
+}
+
 /** スクリプトエディタから1回だけ実行してキーを保存する */
 function setGeminiKey_() {
   const ui = SpreadsheetApp.getUi();
@@ -462,7 +488,9 @@ function generateAIText(avgSales, count, waitAvg, timesArr) {
   if (count <= 1) return "データ不足のため判断保留。";
   const key = getGeminiKey_();
   if (!key) return "【AI未設定】GEMINI_API_KEY が未登録です。";
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
+  const model = getGeminiModel_();
+  const endpoint = "https://generativelanguage.googleapis.com/v1beta/models/" +
+                   model + ":generateContent?key=" + encodeURIComponent(key);
   const prompt = `あなたはプロのタクシードライバー専用のデータ分析AIです。以下の実績データをもとに、大阪の夜勤タクシードライバー（20:00〜04:00）に向けた今後の戦略やアドバイスを、簡潔に「30文字以内」で出力してください。
   ・平均売上: ${avgSales}円
   ・今月乗車件数: ${count}件
@@ -474,15 +502,28 @@ function generateAIText(avgSales, count, waitAvg, timesArr) {
 
   try {
     const res = UrlFetchApp.fetch(endpoint, options);
-    const json = JSON.parse(res.getContentText());
+    const code = res.getResponseCode();
+    const body = res.getContentText();
+    const json = JSON.parse(body);
+
     if (json.candidates && json.candidates[0] && json.candidates[0].content) {
-      let aiText = json.candidates[0].content.parts[0].text.trim();
+      const aiText = json.candidates[0].content.parts[0].text.trim();
       return aiText.replace(/\r?\n/g, ' ');
-    } else {
-      return "【AI分析エラー】データが取得できませんでした。";
     }
+
+    // 何が起きたか分かるように、原因をそのまま出す。
+    // 「データが取得できませんでした」だけだと、モデル廃止なのかキー切れなのか分からない。
+    const why = (json.error && json.error.message) ? json.error.message : body.slice(0, 120);
+    if (code === 404) {
+      return "【モデル " + model + " が見つかりません】廃止された可能性。setGeminiModel_ で変更してください";
+    }
+    if (code === 400 || code === 403) {
+      return "【APIキーの問題 " + code + "】" + why;
+    }
+    if (code === 429) return "【回数制限】しばらく待って再実行してください";
+    return "【AIエラー " + code + "】" + why;
   } catch(e) {
-    return "【通信エラー】AIに接続できませんでした。";
+    return "【通信エラー】" + (e && e.message ? e.message : e);
   }
 }
 
@@ -492,6 +533,10 @@ function updateDetailedDashboard(mainSS, startD, endD, recordsForGraph, areaStat
   let descSheet = mainSS.getSheetByName("説明"); let dashboardId = descSheet ? descSheet.getRange("Z2").getValue() : ""; let dbSS;
   try { if (dashboardId) dbSS = SpreadsheetApp.openById(dashboardId); else throw new Error(); } catch(e) { dbSS = SpreadsheetApp.create("☣️僕はグールだッシュボード☣️"); if (descSheet) descSheet.getRange("Z2").setValue(dbSS.getId()); }
   const daysStr = ["日", "月", "火", "水", "木", "金", "土"]; let tabName = `📈 ${startD.getMonth()+1}/${startD.getDate()}(${daysStr[startD.getDay()]})`;
+  // グラフの大きさ。列幅は下で全部50pxに揃えるので、A〜Z列 = 26×50px
+  const CHART_W = 26 * 50 - 2;
+  const CHART_H = 520;
+  const CHART_ROWS = Math.ceil(CHART_H / 21) + 1;   // この行数だけ空けないと次の見出しに重なる
   let sheet = dbSS.getSheetByName(tabName) || dbSS.insertSheet(tabName, 0); sheet.clear(); sheet.getCharts().forEach(c => sheet.removeChart(c));
   let maxR = sheet.getMaxRows(); if(maxR < 600) sheet.insertRowsAfter(maxR, 600 - maxR);
 
@@ -577,6 +622,7 @@ function updateDetailedDashboard(mainSS, startD, endD, recordsForGraph, areaStat
       });
       sheet.getRange(curRow - 11, 1, 11, 16).setBorder(true, true, true, true, true, true, "#000000", SpreadsheetApp.BorderStyle.SOLID);
 
+      let chartPlaced = false;
       let recs = recordsForGraph.filter(r => r.spotName === spotName);
       if(recs.length > 0) {
         let header = ["時間"]; datesArr.forEach(d => { header.push("'" + d); }); let table = [header];
@@ -592,11 +638,13 @@ function updateDetailedDashboard(mainSS, startD, endD, recordsForGraph, areaStat
             .setOption('title', `📈 【${spotName}】詳細分数・売上推移`).setOption('hAxis', {title: '時間 (10分単位)', minValue: 20, maxValue: 29, ticks: customTicks, gridlines: {color: '#e0e0e0'}})
             .setOption('vAxis', {title: '売上金額 (￥1,000単位)', format: '￥#,##0', ticks: vTicks, gridlines: {color: '#e0e0e0'}}).setOption('series', seriesOpt).setOption('useFirstColumnAsDomain', true).setOption('headers', 1)
             .setOption('legend', {position: 'right', textStyle: {fontSize: 11}}).setOption('chartArea', {left: '8%', top: '10%', width: '75%', height: '75%'}).setOption('interpolateNulls', true)
-            .setOption('width', 900).setOption('height', 400).build();
-          sheet.insertChart(chart); hiddenDataRow += 40;
+            .setOption('width', CHART_W).setOption('height', CHART_H).build();
+          sheet.insertChart(chart); hiddenDataRow += 40; chartPlaced = true;
         }
       }
-      curRow += 20;
+      // グラフを置いたら、その高さぶんだけ行を送る
+      // （v185は20行固定で足りず、次の見出しに重なっていた）
+      curRow += chartPlaced ? CHART_ROWS : 2;
     }
   }
 

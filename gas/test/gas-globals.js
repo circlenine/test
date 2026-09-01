@@ -50,6 +50,15 @@ function normalizePlace_(str) {
   return s;
 }
 
+const HOLIDAYS = [
+  "1/1","1/2","1/3","1/12","2/11","2/23","3/20","3/21","4/29","5/3","5/4","5/5","5/6",
+  "7/19","7/20","8/11","8/13","8/14","8/15","8/16","9/20","9/21","9/22","9/23",
+  "10/11","10/12","11/3","11/23","12/31"
+];
+function isHoliday_(d) {
+  return HOLIDAYS.indexOf((d.getMonth() + 1) + "/" + d.getDate()) !== -1;
+}
+
 function pad2_(n) { return ("0" + n).slice(-2); }
 function fmtDate_(d) { return (d.getMonth() + 1) + "/" + d.getDate(); }
 const ymdOf_ = function (d) {

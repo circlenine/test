@@ -16,7 +16,9 @@ eq(ctx.isOpucha_('ｵﾌﾟﾁｬ'), true, '半角カナ ｵﾌﾟﾁｬ');
 eq(ctx.isOpucha_(' オプチャ経由 '), true, 'オプチャ経由（前後空白）');
 eq(ctx.isOpucha_('オープンチャット'), true, 'オープンチャット');
 eq(ctx.isOpucha_('自社'), false, '自社');
-eq(ctx.isOpucha_(''), false, '空欄');
+eq(ctx.isOpucha_(''), true, '空欄はオプチャ扱い');
+eq(ctx.isOpucha_('   '), true, '空白のみもオプチャ扱い');
+eq(ctx.isOpucha_(null), true, 'null もオプチャ扱い');
 
 // --- 数値パース ---
 eq(ctx.toNumber_(120000), 120000, '数値そのまま');
@@ -34,16 +36,20 @@ eq(ctx.bucketIndex_(2999999, E), 4, '299万 → 100〜300万');
 eq(ctx.bucketIndex_(3000000, E), 5, '300万ちょうど → 300万〜');
 
 // --- 2セクションの母集団が分かれているか ---
+const mk = k => ({kubun: k, sales: 0, isOpucha: ctx.isOpucha_(k)});
 const rows = [
   {kubun:'自社',   sales:200000, isOpucha:false},
   {kubun:'自社',   sales:400000, isOpucha:false},
   {kubun:'紹介',   sales:900000, isOpucha:false},
   {kubun:'オプチャ', sales:5000000, isOpucha:true},  // 高額。平均に混ざると壊れる
+  {kubun:'',       sales:3000000, isOpucha:true},  // A列空白もオプチャ = 平均から除外
 ];
 const own = rows.filter(r => !r.isOpucha);
-eq(ctx.sum_(own)/own.length, 500000, '自社実績の平均 = 50万（オプチャ500万は除外）');
-eq(ctx.sum_(rows)/rows.length, 1625000, '（参考）全件平均だと162.5万に膨らむ');
-eq(rows.length, 4, '大物マップは全4件が母集団');
+eq(own.length, 3, '自社実績の母集団は3件（オプチャ・空白を除外）');
+eq(ctx.sum_(own)/own.length, 500000, '自社実績の平均 = 50万（オプチャ500万・空白300万は除外）');
+eq(ctx.sum_(rows)/rows.length, 1900000, '（参考）全件平均だと190万に膨らむ');
+eq(rows.length, 5, '大物マップは全5件が母集団（空白行も計上）');
+eq(mk('').isOpucha && mk('オプチャ').isOpucha, true, '空白と明示オプチャは同じ扱い');
 eq(ctx.bucketIndex_(5000000, E), 5, 'オプチャの500万は「300万〜」に計上される');
 eq(ctx.median_(own.map(r=>r.sales)), 400000, '中央値');
 

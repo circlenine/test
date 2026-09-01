@@ -14,8 +14,10 @@ const CONFIG = {
   KUBUN_COL: 1,             // A列 = 区分/流入経路
   SALES_HEADER: '売上',     // 売上金額の列ヘッダー名
 
-  // A列がこのいずれかを含む行を「オプチャ」と判定する（表記ゆれ対策）
+  // A列がこのいずれかを含む行を「オプチャ」と判定する（表記ゆれ対策）。
+  // なお A列が空白の行もオプチャ扱いにする（未記入＝オプチャ経由の運用のため）。
   OPUCHA_ALIASES: ['オプチャ', 'オープンチャット', 'ｵﾌﾟﾁｬ'],
+  OPUCHA_LABEL: 'オプチャ',  // 大物マップでオプチャ行（空白含む）をまとめる列名
 
   // ---- 出力 ----
   REPORT_SHEET: 'レポート',
@@ -71,14 +73,25 @@ function readRows_() {
     if (sales === null) continue;
 
     const kubun = String(values[i][CONFIG.KUBUN_COL - 1] || '').trim();
-    rows.push({ kubun: kubun, sales: sales, isOpucha: isOpucha_(kubun) });
+    const opucha = isOpucha_(kubun);
+    rows.push({
+      kubun: kubun,
+      sales: sales,
+      isOpucha: opucha,
+      // 空白行も明示「オプチャ」行も、大物マップ上は同じ列にまとめる
+      displayKubun: opucha ? CONFIG.OPUCHA_LABEL : kubun,
+    });
   }
   return rows;
 }
 
-/** A列の値がオプチャ由来かどうか。表記ゆれを吸収するため部分一致で判定する。 */
+/**
+ * A列の値がオプチャ由来かどうか。
+ * 空白はオプチャ扱い。それ以外は表記ゆれを吸収するため部分一致で判定する。
+ */
 function isOpucha_(kubun) {
   const v = normalize_(kubun);
+  if (v === '') return true;
   return CONFIG.OPUCHA_ALIASES.some(function (alias) {
     return v.indexOf(normalize_(alias)) !== -1;
   });
@@ -114,7 +127,7 @@ function writeOwnPerformance_(sheet, startRow, rows) {
   let row = startRow;
   row = writeSectionTitle_(sheet, row, '【自社実績】平均売上');
   sheet.getRange(row, 1)
-    .setValue('母集団: A列が「オプチャ」の行を除外（除外 ' + excluded + ' 件 / 全 ' + rows.length + ' 件）')
+    .setValue('母集団: A列が「オプチャ」または空白の行を除外（除外 ' + excluded + ' 件 / 全 ' + rows.length + ' 件）')
     .setFontColor('#666666').setFontSize(9);
   row += 2;
 
@@ -136,7 +149,8 @@ function writeOwnPerformance_(sheet, startRow, rows) {
   row += summary.length + 1;
 
   // 区分別の平均（オプチャは母集団にいないので当然出てこない）
-  const byKubun = groupBy_(own, function (r) { return r.kubun || '(未設定)'; });
+  // own 行は空白がオプチャ判定で除外済みなので、区分は必ず埋まっている
+  const byKubun = groupBy_(own, function (r) { return r.kubun; });
   const names = Object.keys(byKubun).sort();
   if (names.length) {
     sheet.getRange(row, 1, 1, 3).setValues([['区分', '件数', '平均売上']])
@@ -165,12 +179,12 @@ function writeBigDealMap_(sheet, startRow, rows) {
   let row = startRow;
   row = writeSectionTitle_(sheet, row, '【大物マップ】件数分布（オプチャ込み）');
   sheet.getRange(row, 1)
-    .setValue('母集団: 全 ' + rows.length + ' 件（オプチャ行を含む）')
+    .setValue('母集団: 全 ' + rows.length + ' 件（オプチャ・A列空白の行を含む）')
     .setFontColor('#666666').setFontSize(9);
   row += 2;
 
   const labels = bucketLabels_(CONFIG.BUCKETS);
-  const kubunNames = uniqueSorted_(rows.map(function (r) { return r.kubun || '(未設定)'; }));
+  const kubunNames = uniqueSorted_(rows.map(function (r) { return r.displayKubun; }));
 
   // ヘッダー: 金額帯 | 区分... | 合計
   sheet.getRange(row, 1, 1, kubunNames.length + 2)
@@ -185,7 +199,7 @@ function writeBigDealMap_(sheet, startRow, rows) {
     return o;
   });
   rows.forEach(function (r) {
-    counts[bucketIndex_(r.sales, CONFIG.BUCKETS)][r.kubun || '(未設定)']++;
+    counts[bucketIndex_(r.sales, CONFIG.BUCKETS)][r.displayKubun]++;
   });
 
   const table = labels.map(function (label, i) {

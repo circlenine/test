@@ -106,6 +106,86 @@ function getGridRange(sheet, startRow, startColIndex, rowCount, colSpanArray) {
   return ranges;
 }
 
+/* ============ 期間（16日〜翌月15日） ============ */
+
+const LR_DOW = ["日", "月", "火", "水", "木", "金", "土"];
+
+/** その日が属する営業期間の開始日。16日起点 */
+function lrPeriodStart_(d) {
+  return (d.getDate() >= 16)
+    ? new Date(d.getFullYear(), d.getMonth(), 16)
+    : new Date(d.getFullYear(), d.getMonth() - 1, 16);
+}
+
+function lrFull_(d)  { return d.getFullYear() + "/" + pad2_(d.getMonth() + 1) + "/" + pad2_(d.getDate()) + "(" + LR_DOW[d.getDay()] + ")"; }
+function lrShort_(d) { return pad2_(d.getMonth() + 1) + "/" + pad2_(d.getDate()) + "(" + LR_DOW[d.getDay()] + ")"; }
+function lrAlt_(d)   { return (d.getMonth() + 1) + "/" + d.getDate() + "(" + LR_DOW[d.getDay()] + ")"; }
+function lrVal_(d)   { return d.getFullYear() + "/" + (d.getMonth() + 1) + "/" + d.getDate(); }
+
+/**
+ * プルダウンに出す期間を、新しい → 古い の順で作る。
+ * 先頭は今期（16日〜今日）。それ以降は 16日〜翌月15日。
+ * 記録が残っている月までしか作らない。
+ */
+function lrPeriodsFrom_(minDate, today) {
+  const out = [];
+  const cur = lrPeriodStart_(today);
+  out.push({
+    value: lrVal_(cur) + "-" + lrVal_(today),
+    label: lrFull_(cur) + " ～ " + lrShort_(today) + "（今期）"
+  });
+  if (!minDate) return out;
+
+  const limit = lrPeriodStart_(minDate);
+  let s = cur, guard = 0;
+  while (s.getTime() > limit.getTime() && guard++ < 240) {
+    const ps = new Date(s.getFullYear(), s.getMonth() - 1, 16);
+    const pe = new Date(s.getFullYear(), s.getMonth(), 15);
+    out.push({ value: lrVal_(ps) + "-" + lrVal_(pe),
+               label: lrFull_(ps) + " ～ " + lrShort_(pe) });
+    s = ps;
+  }
+  return out;
+}
+
+/** 画面から呼ばれる。記録の一番古い営業日を調べて期間一覧を返す */
+function getReportPeriods() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let minD = null;
+  ALL_TABS.forEach(function (name) {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const last = sh.getLastRow();
+    if (last < START_ROW) return;
+    // B列(営業日)とF列(金額)を見る。金額が無い行は年見出しなので数えない
+    sh.getRange(START_ROW, C_DATE, last - START_ROW + 1, C_MONEY - C_DATE + 1)
+      .getValues().forEach(function (r) {
+        const d = r[0];
+        if (!(d instanceof Date)) return;
+        if (d.getFullYear() < 2020 || d.getFullYear() > 2035) return;
+        if (String(r[C_MONEY - C_DATE]).replace(/[^0-9]/g, "") === "") return;
+        if (!minD || d < minD) minD = d;
+      });
+  });
+  return JSON.stringify(lrPeriodsFrom_(minD, new Date()));
+}
+
+/** 送信先のグループIDを設定する（説明タブ Z1） */
+function menuSetGroupId() {
+  const ui = SpreadsheetApp.getUi();
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("説明");
+  if (!sh) { ui.alert("説明タブが見つかりません。"); return; }
+  const cur = String(sh.getRange("Z1").getValue() || "");
+  const res = ui.prompt("グループLINEのID",
+    "レポートを送るグループのID（C から始まる文字列）を貼り付けてください。\n現在: " + (cur || "未設定"),
+    ui.ButtonSet.OK_CANCEL);
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+  const v = res.getResponseText().trim();
+  if (!v) return;
+  sh.getRange("Z1").setValue(v);
+  ui.alert("保存しました。（説明タブ Z1）");
+}
+
 /* ============ 📤 レポート送信UI ============ */
 
 function showReportDialog() {
@@ -148,10 +228,15 @@ function showReportDialog() {
         document.getElementById('customArea').style.display = mode === 'custom' ? 'flex' : 'none';
       }
       window.onload = function() {
-        var select = document.getElementById('periodSelect'); var today = new Date(); var cY = today.getFullYear(); var cM = today.getMonth() + 1; var cD = today.getDate();
-        var sY = cY, sM = cM; if (cD <= 15) { sM -= 1; if (sM === 0) { sM = 12; sY -= 1; } }
-        var cVal = sY + "/" + sM + "/16-" + cY + "/" + cM + "/" + cD; select.add(new Option(sY + "/" + ("0"+sM).slice(-2) + "/16 ～ " + ("0"+cM).slice(-2) + "/" + ("0"+cD).slice(-2) + " (今期進行中)", cVal));
-        for (var i = 0; i < 12; i++) { var eY = sY, eM = sM; var hist_sM = eM - 1, hist_sY = eY; if (hist_sM === 0) { hist_sM = 12; hist_sY -= 1; } var hVal = hist_sY + "/" + hist_sM + "/16-" + eY + "/" + eM + "/15"; select.add(new Option(hist_sY + "/" + ("0"+hist_sM).slice(-2) + "/16 ～ " + ("0"+eM).slice(-2) + "/15", hVal)); sY = hist_sY; sM = hist_sM; }
+        var s = document.getElementById('periodSelect');
+        s.add(new Option('読み込み中…', ''));
+        google.script.run.withSuccessHandler(function(js){
+          var list = JSON.parse(js); s.innerHTML = '';
+          if (!list.length) { s.add(new Option('記録がありません', '')); return; }
+          list.forEach(function(p){ s.add(new Option(p.label, p.value)); });
+        }).withFailureHandler(function(e){
+          s.innerHTML = ''; s.add(new Option('期間を読めません: ' + e.message, ''));
+        }).getReportPeriods();
       };
       function send() {
         var mode = document.querySelector('input[name="mode"]:checked').value;
@@ -354,10 +439,21 @@ function sendCustomReport(targetId, customStartD, customEndD) {
   });
 
   let flexMessage = { "type": "bubble", "size": "giga", "header": { "type": "box", "layout": "vertical", "backgroundColor": "#1155ca", "paddingAll": "15px", "contents": [ { "type": "text", "text": `📈 【${periodStr}】分析・戦略レポート`, "weight": "bold", "color": "#ffffff", "size": "md", "wrap": true } ] }, "body": { "type": "box", "layout": "vertical", "paddingAll": "12px", "spacing": "none", "contents": flexContents }, "footer": { "type": "box", "layout": "vertical", "paddingAll": "15px", "contents": [ { "type": "button", "style": "primary", "color": "#d93025", "action": { "type": "uri", "label": "🚨ボタンを押せッ!!!!(スプシへ移動)🚨", "uri": dashboardUrl } } ] } };
-  let messages = [ { type: "flex", altText: "📈 レポート作成完了", contents: flexMessage } ];
+  // 裏メッセージ（通知やトーク一覧に出る文字）
+  const altText = lrAlt_(startD) + "～" + lrAlt_(endD) + "レポート作成 byシバンニ";
+  let messages = [ { type: "flex", altText: altText, contents: flexMessage } ];
   const token = getLineToken_();
-  if (!targetId) { UrlFetchApp.fetch("https://api.line.me/v2/bot/message/broadcast", { method: "post", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token }, payload: JSON.stringify({ messages: messages }) }); }
-  else { UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", { method: "post", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token }, payload: JSON.stringify({ to: targetId, messages: messages }) }); }
+  // 送信先が無いときに broadcast（公式アカウントの友だち全員に配信）へ落ちないようにする。
+  // グループへ送るにはグループIDが要る。未設定なら止める。
+  if (!targetId) {
+    throw new Error("送信先が未設定です。メニュー「👥 グループIDを設定」から登録してください。" +
+                    "（友だち全員への配信を防ぐため中止しました）");
+  }
+  UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
+    method: "post",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+    payload: JSON.stringify({ to: targetId, messages: messages })
+  });
 }
 
 /* ============ 🤖 Gemini「傾向と対策」 ============ */

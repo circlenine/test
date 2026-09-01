@@ -13,11 +13,12 @@
  *    ロング   … ￥10,000以上
  *
  *  【自社 / オプチャ の見分け方】
- *    オプチャ = 「関空」タブにあり、かつ個人タブに同じ乗車が無い行。
- *    関空情報は現状すべてオプチャ。誰かが実際に関空へ行けば
- *    その乗車は個人タブに入るので、自動的に自社側へ移る。
- *    ※A列の空白では判定しない。LINE連携前の記録はA列が空のまま
- *      個人タブに入っており、それは自社実績だから。
+ *    Opucha.gs の印（メニュー「🏷 オプチャ印を付ける／外す」で指定したもの）で判定する。
+ *    タブや列からは機械的に判定できないため。
+ *      ・LINE連携前の記録は A列が空のまま個人タブに入っている（自社実績）
+ *      ・過去にLINEのメッセージで送ったオプチャ情報も個人タブに入っている
+ *      ・関空タブにも自社の乗車が混ざっている
+ *    Opucha.gs が無い場合は、全件を自社として扱う。
  * ================================================================
  */
 
@@ -64,9 +65,11 @@ function stShrink_(sum, n, globalAvg) {
 /** 期間内の乗車を集める。startD/endD 省略で全期間 */
 function stCollect_(startD, endD) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const personalKeys = {};
   const rows = [];
   const seen = {};
+  // Opucha.gs の印を使う。無ければ全件を自社として扱う
+  const hasMark = (typeof opuIsOpucha_ === "function");
+  const marks = hasMark ? opuMarks_() : {};
 
   const read = function (name, isPersonal) {
     const sh = ss.getSheetByName(name);
@@ -89,17 +92,17 @@ function stCollect_(startD, endD) {
 
       const place = String(r[C_PLACE - 1]).replace(/\n/g, " ").replace(/\s+/g, " ").trim();
       const rideKey = ymdOf_(date) + "|" + tm[0] + "|" + money;
-      if (isPersonal && !personalKeys[rideKey]) personalKeys[rideKey] = true;
-
       const dupKey = rideKey + "|" + normalizePlace_(place);
       if (seen[dupKey]) return;
       seen[dupKey] = true;
 
       const w = String(r[C_WAIT - 1]).replace(/[^0-9]/g, "");
+      const who = String(r[C_SENDER - 1]).trim();
       rows.push({
         date: date, hh: hh, time: tm[0], money: money, place: place,
         wait: w === "" ? null : parseInt(w, 10),
-        tab: name, rideKey: rideKey,
+        tab: name, rideKey: rideKey, who: who,
+        isOpu: hasMark ? opuIsOpucha_(who, rideKey, marks) : false,
         slot: stSlot_(hh), band: stBand_(money),
         dayType: stDayType_(date), dow: ST_WEEKDAYS[date.getDay()]
       });
@@ -109,14 +112,10 @@ function stCollect_(startD, endD) {
   PERSONAL_TABS.forEach(function (n) { read(n, true); });
   ALL_TABS.forEach(function (n) { if (PERSONAL_TABS.indexOf(n) === -1) read(n, false); });
 
-  // オプチャ判定：関空タブにあって、個人タブに同じ乗車が無いもの
   const own = [], opu = [];
-  rows.forEach(function (x) {
-    x.isOpu = (x.tab === "関空") && !personalKeys[x.rideKey];
-    (x.isOpu ? opu : own).push(x);
-  });
+  rows.forEach(function (x) { (x.isOpu ? opu : own).push(x); });
 
-  return { all: rows, own: own, opu: opu };
+  return { all: rows, own: own, opu: opu, hasMark: hasMark };
 }
 
 function stSum_(list) { return list.reduce(function (a, x) { return a + x.money; }, 0); }
@@ -260,7 +259,7 @@ function stLongMap_(all) {
 function buildStrategy(startD, endD) {
   const c = stCollect_(startD, endD);
   return {
-    all: c.all, own: c.own, opu: c.opu,
+    all: c.all, own: c.own, opu: c.opu, hasMark: c.hasMark,
     tachimawari: stTachimawari_(c.own),
     efficiency: stEfficiency_(c.own, 5),
     byWeekday: stByWeekday_(c.own),
@@ -350,7 +349,7 @@ function runStrategy(val) {
 
   const own = S.own;
   let out = "■ 期間: " + label + "\n";
-  out += "■ 自社 " + own.length + "件 ／ オプチャ(関空) " + S.opu.length + "件\n";
+  out += "■ 自社 " + own.length + "件 ／ オプチャ " + S.opu.length + "件\n";
   out += "■ ショート≦" + stYen_(ST_SHORT_MAX) + " ／ ミドル〜" + stYen_(ST_LONG_MIN - 1) +
          " ／ ロング≧" + stYen_(ST_LONG_MIN) + "\n";
   out += "  全体 平均" + stYen_(stAvg_(own)) +
@@ -433,8 +432,12 @@ function runStrategy(val) {
 
   out += "\n══════════════════════\n";
   out += "【判定について】\n";
-  out += "オプチャ = 関空タブにあり、個人タブに同じ乗車が無い行。\n";
-  out += "A列の空白では判定していません（LINE連携前の記録はA列が空のため）。\n";
+  if (S.hasMark) {
+    out += "オプチャ = メニュー「🏷 オプチャ印を付ける／外す」で指定した乗車。\n";
+    out += "印が0件のうちは、全件が自社として集計されます。\n";
+  } else {
+    out += "Opucha.gs が入っていないため、全件を自社として集計しました。\n";
+  }
 
   progSet_(100, "完了");
   return out;

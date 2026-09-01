@@ -68,12 +68,14 @@ eq(ctx.stHourLabel_(25), '1時', '25 は「1時」と表示');
 
 const S = ctx.buildStrategy(null, null);
 
-/* ---- オプチャ判定 ---- */
-eq(S.opu.length, 1, 'オプチャは1件（夕陽丘のみ）');
-eq(S.opu[0].place, '夕陽丘', 'オプチャは関空タブで個人タブに無い行');
-eq(S.own.length, 8, '自社は8件（A列空も、関空タブの自社分も自社に入る）');
+/* ---- オプチャ判定（Opucha.gs 未導入のとき） ---- */
+// 印は Opucha.gs が持つ。このテストでは読み込んでいないので、全件が自社になる。
+// 印を付けたときの動きは gas/test/opucha.test.js で検証している。
+eq(S.hasMark, false, 'Opucha.gs が無いときは印を使わない');
+eq(S.opu.length, 0, '  オプチャは0件（印が無いので全件自社）');
+eq(S.own.length, 9, '  自社は9件');
 eq(S.own.filter(x => x.place === '新地7' && x.money === 20000).length, 1,
-   '関空タブのﾀﾞｲｽｹ¥20,000は個人タブにもあるので自社・二重にならない');
+   '関空タブのﾀﾞｲｽｹ¥20,000は個人タブにもあるので二重にならない');
 eq(S.all.length, 9, '個人タブと北4の写しが二重にならない（生10行→9件）');
 
 /* ---- 曜日区分 ---- */
@@ -120,8 +122,8 @@ eq(wd.find(r => r.dow === '木').long, 1, '木曜のロングは1件');
 /* ---- ロングマップ（オプチャ込み） ---- */
 const lm = S.longMap;
 const yu = lm.find(r => r.place === '夕陽丘');
-eq(yu.opuLong, 1, '夕陽丘はオプチャのロング1件');
-eq(yu.ownLong, 0, '夕陽丘は自社のロング0件');
+eq(yu.long, 1, '夕陽丘のロングは1件');
+eq(yu.ownLong, 1, '印が無いので自社側に計上される（印を付ければオプチャ側へ移る）');
 eq(lm.find(r => r.place === '新地7').ownLong, 1, '新地7の¥20,000は自社のロング');
 eq(lm.every(r => r.long > 0), true, 'ロングが無い乗り場はロングマップに出さない');
 

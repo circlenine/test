@@ -1,38 +1,28 @@
 /**
  * ================================================================
  *  LINE画像（Flex Message）＋ まとめスプシ レポート作成
- *  ── v185 からレポート部分のみを抜粋したもの ──
  *
- *  【抜粋した関数】
- *    showReportDialog            レポート送信UI（期間選択・日付指定・テスト送信）
- *    executeManualReportFromUI   UIからの実行受け口
- *    sendCustomReport            集計 → Flex Message組み立て → LINE送信
- *    updateDetailedDashboard     まとめスプシにダッシュボードを作る
- *    generateAIText              Gemini による「傾向と対策」生成
- *    getGridRange / normalizeStr / removeStreetSuffix
- *    toHalfWidthKana / isHolidayFunc
+ *  ★★★  L001ver  （2026/09/02）  ★★★
  *
- *  【抜粋しなかったもの】（記録用スプシの記録・整形まわり。v232が担当）
- *    doPost / parseAndRecordMessage / logUnknownId / onEdit
- *    executeSingleTabCheck / showSyncDialog / triggerManualSync
- *    calculateStartTime / insertLineBreak / onOpen
- *    USER_MAP / CATEGORY_TABS / RIDE_TYPES
+ *  ファイル記号: K=コード.gs / L=LineReport.gs / E=Extras.gs
+ *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
+ *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
  *
- *  【v232 と重複するので、この抜粋からは外した定義】
- *    PERSONAL_TABS / HOLIDAYS / NORTH_WORDS / SOUTH_WORDS
- *    → v232（統合スクリプト）側のものがそのまま使われます。
- *      同じプロジェクトに置かないと動きません。
- *
- *  【v185 から変えた点は2つだけ】
- *    1. LINEトークンとGeminiキーをコードから追い出し、
- *       スクリプトプロパティから読むようにした（元は直書き）
- *    2. 重複する定数の宣言を削除（同じプロジェクトに置くとエラーになるため）
- *    ロジックは触っていません。
- *
- *  【メニューに出す】v232 の onOpen() に1行:
- *      .addItem("📊 レポートを手動送信", "showReportDialog")
+ *  [L001ver] v185 のレポート部分を取り出して作り直したもの
+ *   ・鍵をコードから追い出した（LINEトークン・Geminiキーは設定に保存）
+ *   ・友だち全員への配信を止めた（送信先未設定ならエラーで停止）
+ *   ・プルダウンに曜日を入れ、記録がある月までしか作らないようにした
+ *   ・裏メッセージを「📈8/16(日)～9/2(水)レポート作成 byシバンニ」に
+ *   ・廃止済みの gemini-1.5-flash を差し替え（AI分析が全行エラーだった原因）
+ *   ・AIのエラー文を、原因が分かる形にした（404=モデル / 403=鍵 / 429=制限）
+ *   ・グラフをA〜Z列の幅に合わせ、下に25行ぶん空けて重なりを解消
+ *   ・コード.gs を触らずメニューを出せるようにした（setupReportMenu）
  * ================================================================
  */
+
+/** このファイルのバージョン */
+const LR_VERSION = "L001ver";
+
 
 /* ============ 鍵（コードに書かない） ============ */
 
@@ -157,7 +147,29 @@ function onOpenReport() {
   m.addItem("👥 グループIDを設定", "menuSetGroupId");
   m.addItem("🤖 Geminiキーを設定", "menuSetGeminiKey");
   m.addItem("🤖 Geminiのモデルを変える", "menuSetGeminiModel");
+  m.addSeparator();
+  m.addItem("ℹ️ バージョンを確認", "menuShowVersions");
   m.addToUi();
+}
+
+/**
+ * いま動いているバージョンを表示する。
+ * 手元のファイルと実際に動いているものがずれていないか、これで確かめられる。
+ */
+function menuShowVersions() {
+  const rows = [];
+  rows.push("K（コード.gs）    : " +
+    (typeof K_VERSION === "string" ? K_VERSION : "未設定（下の1行を足すと出ます）"));
+  rows.push("L（LineReport.gs）: " + LR_VERSION);
+  rows.push("E（Extras.gs）    : " +
+    (typeof EX_VERSION === "string" ? EX_VERSION : "入っていません"));
+
+  let msg = "いま動いているバージョン\n──────────────\n" + rows.join("\n");
+  if (typeof K_VERSION !== "string") {
+    msg += "\n\n※ コード.gs の先頭に次の1行を足すと、Kも表示されます:\n" +
+           'const K_VERSION = "K001ver";';
+  }
+  SpreadsheetApp.getUi().alert(msg);
 }
 
 /**
@@ -283,7 +295,7 @@ function showReportDialog() {
     .progress-bar { width: 0%; height: 100%; background: #34a853; transition: width 0.3s; }
     .status-text { font-size: 13px; margin-top: 5px; text-align: center; display: none; font-weight: bold; }
   </style></head><body>
-    <h3>📊 レポート期間指定 & 送信</h3>
+    <h3>📊 レポート期間指定 & 送信</h3>\n    <div style="font-size:11px;color:#999;margin:-4px 0 6px">${LR_VERSION}</div>
     <div class="line"></div>
     <div class="radio-group">
       <label><input type="radio" name="mode" value="select" checked onchange="toggle()"> 📅 期間選択</label>

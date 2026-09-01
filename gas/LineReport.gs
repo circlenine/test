@@ -518,7 +518,7 @@ function sendCustomReport(targetId, customStartD, customEndD) {
 
   let flexMessage = { "type": "bubble", "size": "giga", "header": { "type": "box", "layout": "vertical", "backgroundColor": "#1155ca", "paddingAll": "15px", "contents": [ { "type": "text", "text": `📈 【${periodStr}】分析・戦略レポート`, "weight": "bold", "color": "#ffffff", "size": "md", "wrap": true } ] }, "body": { "type": "box", "layout": "vertical", "paddingAll": "12px", "spacing": "none", "contents": flexContents }, "footer": { "type": "box", "layout": "vertical", "paddingAll": "15px", "contents": [ { "type": "button", "style": "primary", "color": "#d93025", "action": { "type": "uri", "label": "🚨ボタンを押せッ!!!!(スプシへ移動)🚨", "uri": dashboardUrl } } ] } };
   // 裏メッセージ（通知やトーク一覧に出る文字）
-  const altText = lrAlt_(startD) + "～" + lrAlt_(endD) + "レポート作成 byシバンニ";
+  const altText = "📈" + lrAlt_(startD) + "～" + lrAlt_(endD) + "レポート作成 byシバンニ";
   let messages = [ { type: "flex", altText: altText, contents: flexMessage } ];
   const token = getLineToken_();
   // 送信先が無いときに broadcast（公式アカウントの友だち全員に配信）へ落ちないようにする。

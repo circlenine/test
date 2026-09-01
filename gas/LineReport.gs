@@ -160,6 +160,30 @@ function onOpenReport() {
   m.addToUi();
 }
 
+/**
+ * ★これを1回だけ実行すれば、メニューが出るようになります。
+ *   エディタ上部の関数選択で setupReportMenu を選び、▶実行 を押すだけ。
+ *   ⏰（トリガー）の画面を触る必要はありません。
+ *
+ * 二重に作らないよう、既にあるものは消してから作り直します。
+ */
+function setupReportMenu() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "onOpenReport") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("onOpenReport").forSpreadsheet(ss).onOpen().create();
+
+  let msg = "✅ 「📊 レポート」メニューを追加しました。\n次にスプレッドシートを開いたときから自動で出ます。";
+  try {
+    onOpenReport();          // いま開いていれば、すぐ出す
+    msg += "\n\n（今開いているシートにも出しました）";
+  } catch (e) {
+    msg += "\n\nスプレッドシートを開き直してください。";
+  }
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e) { console.log(msg); }
+}
+
 /* ============ 期間（16日〜翌月15日） ============ */
 
 const LR_DOW = ["日", "月", "火", "水", "木", "金", "土"];

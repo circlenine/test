@@ -2,11 +2,16 @@
  * ================================================================
  *  LINE画像（Flex Message）＋ まとめスプシ レポート作成
  *
- *  ★★★  L001ver  （2026/09/02）  ★★★
+ *  ★★★  L002ver  （2026/09/02）  ★★★
  *
  *  ファイル記号: K=コード.gs / L=LineReport.gs / E=Extras.gs
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [L002ver]
+ *   ・setupReportMenu のポップアップを削除（毎回出て邪魔だったため）
+ *   ・起動時トリガーが setupReportMenu に向いていた場合も自動で直すようにした
+ *     （そのままだと毎回作り直しが走り、メニューが二重に出ることがある）
  *
  *  [L001ver] v185 のレポート部分を取り出して作り直したもの
  *   ・鍵をコードから追い出した（LINEトークン・Geminiキーは設定に保存）
@@ -21,7 +26,7 @@
  */
 
 /** このファイルのバージョン */
-const LR_VERSION = "L001ver";
+const LR_VERSION = "L002ver";
 
 
 /* ============ 鍵（コードに書かない） ============ */
@@ -181,19 +186,23 @@ function menuShowVersions() {
  */
 function setupReportMenu() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  // 起動時トリガーを作り直す。
+  // setupReportMenu 自身に向いたトリガーがあると毎回作り直しが走るので、それも消す
+  // （メニューが二重に出る原因にもなる）。
+  let removed = 0;
   ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (t.getHandlerFunction() === "onOpenReport") ScriptApp.deleteTrigger(t);
+    const f = t.getHandlerFunction();
+    if (f === "onOpenReport" || f === "setupReportMenu") {
+      ScriptApp.deleteTrigger(t);
+      removed++;
+    }
   });
   ScriptApp.newTrigger("onOpenReport").forSpreadsheet(ss).onOpen().create();
 
-  let msg = "✅ 「📊 レポート」メニューを追加しました。\n次にスプレッドシートを開いたときから自動で出ます。";
-  try {
-    onOpenReport();          // いま開いていれば、すぐ出す
-    msg += "\n\n（今開いているシートにも出しました）";
-  } catch (e) {
-    msg += "\n\nスプレッドシートを開き直してください。";
-  }
-  try { SpreadsheetApp.getUi().alert(msg); } catch (e) { console.log(msg); }
+  // ポップアップは出さない。メニューが出ること自体が結果なので、確認は要らない。
+  // （起動時トリガーが誤ってこの関数に向いていても、毎回ポップアップが出ないようにする）
+  try { onOpenReport(); } catch (e) { console.log("メニュー作成: " + e.message); }
+  console.log("setupReportMenu: 古いトリガー" + removed + "個を消し、onOpenReport を1つ設定しました");
 }
 
 /* ============ 期間（16日〜翌月15日） ============ */

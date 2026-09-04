@@ -6,7 +6,7 @@
 
 | 記号 | ファイル | いま |
 |---|---|---|
-| **C** | `Code.gs`（統合スクリプト） | C004ver |
+| **C** | `Code.gs`（統合スクリプト） | C008ver |
 | **L** | `LineReport.gs` | L003ver |
 | **E** | `Extras.gs` | E002ver |
 

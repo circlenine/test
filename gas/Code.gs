@@ -1,17 +1,23 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  K003ver  （2026/09/02）  ★★★   ← もとは version 232
+ *  ★★★  C004ver  （2026/09/02）  ★★★   ← もとは version 232
  *
- *  ファイル記号: K=コード.gs / L=LineReport.gs / E=Extras.gs
+ *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
+ *  ※ Apps Script 上のファイル名も「Code」に統一してください（旧: コード）
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
  *
- *  [K003ver]
- *   ・開いたときの通知を toast（右下からひょっこり出るタイプ）に変更
- *     画面を止めないので、スマホでも待たされない。最終更新も一緒に出す
+ *  [C004ver]
+ *   ・開いたときのチェックを、右下に出る形（toast）で復活させた
+ *     「〇〇タブをチェック中(推定残り約〇秒)」→「変更ありませんでした / 修正しました」
+ *     画面を止めないので、スマホでも操作を待たされない
+ *   ・メニューから ON / OFF を切り替えられるようにした
+ *   ・バージョン記号を K → C に変更（ファイル名 Code.gs に合わせた）
  *
- *  [K002ver] 速度改善のみ。動作は変えていない
+ *  [C003ver（旧K003ver）] 開いたときの通知を toast に変更
+ *
+ *  [C002ver（旧K002ver）] 速度改善のみ。動作は変えていない
  *   ・開いたときの自動整形をやめた（スマホでフリーズする最大の原因）
  *     → 整形は「🔄 いま開いているタブだけ整形する」から手動で
  *   ・営業日の境目の下線を、境目ごと→まとめて1回に（getRangeList）
@@ -236,7 +242,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const K_VERSION = "K003ver";
+const CODE_VERSION = "C004ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -1655,7 +1661,9 @@ function onOpen() {
 
   const m1 = ui.createMenu("🅰️ はじめの設定（初回だけ）")
     .addItem("🔑 LINEトークンを設定", "menuSetToken")
-    .addItem("⏱ 毎日17:00の自動チェックをONにする", "menuInstallTriggers");
+    .addItem("⏱ 毎日17:00の自動チェックをONにする", "menuInstallTriggers")
+    .addItem("⏱ 開いたときのチェックを ON", "menuOpenCheckOn")
+    .addItem("⏸ 開いたときのチェックを OFF", "menuOpenCheckOff");
 
   const m2 = ui.createMenu("🅱️ ふだんの整形")
     .addItem("🧹 全タブをまとめて整形する", "menuFormatAll")
@@ -1686,42 +1694,65 @@ function onOpen() {
     .addSubMenu(m6)
     .addToUi();
 
-  // 開いたときは、右下に小さく出すだけにする。
-  //
-  // これまでは showSyncDialog_ を呼んでいたが、あれは画面を止める形の
-  // ダイアログで、しかも開くたびにそのタブを丸ごと整形し直していた
-  // （並び替え・全行の色・枠線・行の高さ・フィルタの張り直し）。
-  // スマホでは数十秒固まる原因だった。
-  //
-  // toast は右下からひょっこり出て自然に消えるだけで、画面を止めない。
-  // 整形も走らせないので、開いた瞬間は一切待たされない。
-  try {
-    const name = SpreadsheetApp.getActiveSheet().getName();
-    if (ALL_TABS.indexOf(name) !== -1) {
-      showOpenToast_(name);
-    }
-  } catch (e) {}
+  // 開いたときのチェックは onOpenCheck が受け持つ（下を参照）。
+  // ここでは何もしない。メニューを作るだけ。
 }
 
+/* ---- 開いたときのチェック（右下に出るタイプ） ---- */
+
 /**
- * 開いたときに右下へ出す小さな通知。
- * 画面を止めないので、スマホでも待たされない。
+ * 開いたときにそのタブをチェックして、結果を右下に出す。
+ *
+ * ★この関数は「インストール済みトリガー」から呼ぶ必要がある。
+ *   通常の onOpen（簡易トリガー）からだと PropertiesService が使えず、
+ *   formatTab_ の中の乗り場名の統一（canonicalPlace_）が動かないため。
+ *   設定は メニュー「🅰️ はじめの設定」→「⏱ 開いたときのチェックを ON」から。
+ *
+ * 以前のダイアログ（showSyncDialog_）と違い、画面を止めない。
+ * ※ toast にシークバーは入れられない仕様なので、推定時間の文字だけ出す。
  */
-function showOpenToast_(name) {
+function onOpenCheck() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sub = "";
+  let name = "";
   try {
+    name = ss.getActiveSheet().getName();
+    if (ALL_TABS.indexOf(name) === -1) return;
+
     const sh = ss.getSheetByName(name);
-    if (sh) {
-      const stamp = String(sh.getRange("B1").getValue() || "").replace("🔄最終更新：", "");
-      if (stamp) sub = "最終更新 " + stamp;
-    }
-  } catch (e) {}
-  ss.toast(
-    (sub ? sub + "\n" : "") + "整形は メニュー →「🔄 いま開いているタブだけ整形する」",
-    "📋 " + name,
-    6
-  );
+    const rows = Math.max(0, sh.getLastRow() - START_ROW + 1);
+    const est = Math.max(2, Math.ceil(rows / 50));
+    ss.toast("(推定残り時間 約" + est + "秒)", "🔄 " + name + "タブをチェック中", 60);
+
+    const changed = formatTab_(sh);
+    touchStamp_(ss, [name]);
+
+    ss.toast(changed ? "並び順・色・行の高さを整えました" : "直すところはありませんでした",
+             changed ? "✅ " + name + "タブを修正しました"
+                     : "✅ " + name + "タブは変更ありませんでした", 5);
+  } catch (e) {
+    logErr_("onOpenCheck", e);
+    try { ss.toast(e.message, "❌ " + name + "タブのチェックに失敗", 8); } catch (e2) {}
+  }
+}
+
+/** 開いたときのチェックを ON にする */
+function menuOpenCheckOn() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "onOpenCheck") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("onOpenCheck").forSpreadsheet(ss).onOpen().create();
+  ss.toast("次に開いたときから右下に出ます", "✅ 開いたときのチェックを ON にしました", 6);
+}
+
+/** 開いたときのチェックを OFF にする（重いと感じたらこちら） */
+function menuOpenCheckOff() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "onOpenCheck") { ScriptApp.deleteTrigger(t); n++; }
+  });
+  ss.toast(n + "個の設定を外しました", "⏸ 開いたときのチェックを OFF にしました", 6);
 }
 
 function menuFormatCurrent() {

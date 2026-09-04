@@ -7,9 +7,11 @@ Strategy.gs / Opucha.gs / ChartFit.gs を Extras.gs に束ねる。
 """
 import pathlib, re, sys
 
-VERSION = "E001ver"
+VERSION = "E002ver"
 DATE = "2026/09/02"
-CHANGELOG = """ *  [E001ver] 3つの追加機能をまとめた最初の版
+CHANGELOG = """ *  [E002ver] ファイル記号を K → C に変更（Code.gs に合わせた）
+ *
+ *  [E001ver] 3つの追加機能をまとめた最初の版
  *   ・🎯 立ち回り分析（曜日区分×時間帯×乗り場、待ち時間あたりの効率）
  *   ・🏷 オプチャ印（検索してチェックで指定。印は設定に保存され整形で消えない）
  *   ・📐 グラフの大きさをZ列に合わせる
@@ -24,7 +26,7 @@ head = f'''/**
  *
  *  ★★★  {VERSION}  （{DATE}）  ★★★
  *
- *  ファイル記号: K=コード.gs / L=LineReport.gs / E=Extras.gs
+ *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
  *

@@ -2,11 +2,14 @@
  * ================================================================
  *  LINE画像（Flex Message）＋ まとめスプシ レポート作成
  *
- *  ★★★  L002ver  （2026/09/02）  ★★★
+ *  ★★★  L003ver  （2026/09/02）  ★★★
  *
- *  ファイル記号: K=コード.gs / L=LineReport.gs / E=Extras.gs
+ *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [L003ver]
+ *   ・バージョン確認の表示を K → C に変更（Code.gs に合わせた）
  *
  *  [L002ver]
  *   ・setupReportMenu のポップアップを削除（毎回出て邪魔だったため）
@@ -26,7 +29,7 @@
  */
 
 /** このファイルのバージョン */
-const LR_VERSION = "L002ver";
+const LR_VERSION = "L003ver";
 
 
 /* ============ 鍵（コードに書かない） ============ */
@@ -163,17 +166,13 @@ function onOpenReport() {
  */
 function menuShowVersions() {
   const rows = [];
-  rows.push("K（コード.gs）    : " +
-    (typeof K_VERSION === "string" ? K_VERSION : "未設定（下の1行を足すと出ます）"));
+  rows.push("C（Code.gs）      : " +
+    (typeof CODE_VERSION === "string" ? CODE_VERSION : "入っていません"));
   rows.push("L（LineReport.gs）: " + LR_VERSION);
   rows.push("E（Extras.gs）    : " +
     (typeof EX_VERSION === "string" ? EX_VERSION : "入っていません"));
 
-  let msg = "いま動いているバージョン\n──────────────\n" + rows.join("\n");
-  if (typeof K_VERSION !== "string") {
-    msg += "\n\n※ コード.gs の先頭に次の1行を足すと、Kも表示されます:\n" +
-           'const K_VERSION = "K001ver";';
-  }
+  const msg = "いま動いているバージョン\n──────────────\n" + rows.join("\n");
   SpreadsheetApp.getUi().alert(msg);
 }
 

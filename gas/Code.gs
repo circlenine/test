@@ -1,12 +1,17 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C004ver  （2026/09/02）  ★★★   ← もとは version 232
+ *  ★★★  C005ver  （2026/09/02）  ★★★   ← もとは version 232
  *
  *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
  *  ※ Apps Script 上のファイル名も「Code」に統一してください（旧: コード）
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C005ver]
+ *   ・開いたときの通知に「何を直したか」を具体的に出すようにした
+ *     例: 「並び替え / 乗り場名を統一2件 / ⚠️要確認1件」
+ *   ・その文言を作る処理を1か所にまとめた（全タブ整形の表示と同じ文になる）
  *
  *  [C004ver]
  *   ・開いたときのチェックを、右下に出る形（toast）で復活させた
@@ -242,7 +247,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C004ver";
+const CODE_VERSION = "C005ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -1195,6 +1200,26 @@ function touchStamp_(ss, names) {
 
 let _formatStats = {};
 
+/**
+ * 直前の整形で「何を直したか」を短い文にして返す。
+ *   例: 「並び替え / 乗り場名を統一2件 / ⚠️要確認1件」
+ * 直したものが無ければ空文字。
+ * 開いたときの通知と、全タブ整形の結果表示の両方でこれを使う（文言をそろえるため）。
+ */
+function formatSummary_(name) {
+  const st = _formatStats[name];
+  if (!st) return "";
+  const bits = [];
+  if (st.sorted)   bits.push("並び替え");
+  if (st.years)    bits.push("年見出し" + st.years + "個");
+  if (st.dateFix)  bits.push("日付を補正" + st.dateFix + "件");
+  if (st.placeFix) bits.push("乗り場名を統一" + st.placeFix + "件");
+  if (st.moved)    bits.push("I→H列へ移動" + st.moved + "件");
+  if (st.dropped)  bits.push("雑談行を削除" + st.dropped + "件");
+  if (st.suspect)  bits.push("⚠️要確認" + st.suspect + "件");
+  return bits.join(" / ");
+}
+
 function formatTab_(sheet) {
   if (!sheet) return false;
   const name = sheet.getName();
@@ -1723,12 +1748,20 @@ function onOpenCheck() {
     const est = Math.max(2, Math.ceil(rows / 50));
     ss.toast("(推定残り時間 約" + est + "秒)", "🔄 " + name + "タブをチェック中", 60);
 
+    _formatStats = {};                       // 今回のぶんだけ見たいので消してから
     const changed = formatTab_(sh);
     touchStamp_(ss, [name]);
 
-    ss.toast(changed ? "並び順・色・行の高さを整えました" : "直すところはありませんでした",
-             changed ? "✅ " + name + "タブを修正しました"
-                     : "✅ " + name + "タブは変更ありませんでした", 5);
+    if (changed) {
+      // 何を直したかを具体的に出す。stat に残らない直し（色・行の高さ・枠線）
+      // しか無かった場合は、その旨を出す
+      const what = formatSummary_(name);
+      ss.toast(what || "並び順・色・行の高さ・枠線を整えました",
+               "✅ " + name + "タブを修正しました", 10);
+    } else {
+      ss.toast("直すところはありませんでした",
+               "✅ " + name + "タブは変更ありませんでした", 5);
+    }
   } catch (e) {
     logErr_("onOpenCheck", e);
     try { ss.toast(e.message, "❌ " + name + "タブのチェックに失敗", 8); } catch (e2) {}
@@ -1807,18 +1840,11 @@ function runFormatAll() {
   ALL_TABS.forEach(function (n) {
     const st = _formatStats[n];
     if (!st) { body += n + " : （タブなし）\n"; return; }
-    const bits = [];
-    if (st.sorted)      bits.push("並び替え");
-    if (st.years)       bits.push("年見出し" + st.years + "個");
-    if (st.dateFix)     bits.push("日付を補正" + st.dateFix + "件");
-    if (st.placeFix)    bits.push("乗り場名を統一" + st.placeFix + "件");
-    if (st.moved)       bits.push("I→H列へ移動" + st.moved + "件");
-    if (st.dropped)     bits.push("雑談行を削除" + st.dropped + "件");
-    if (st.suspect)     bits.push("⚠️要確認" + st.suspect + "件");
+    const summary = formatSummary_(n);
     total.dropped += st.dropped; total.dateFix += st.dateFix;
     total.placeFix += st.placeFix; total.moved += st.moved; total.years += st.years;
     total.suspect += (st.suspect || 0);
-    body += n + " (" + st.read + "行) : " + (bits.length ? bits.join(" / ") : "変更はありませんでした") + "\n";
+    body += n + " (" + st.read + "行) : " + (summary || "変更はありませんでした") + "\n";
     if (st.raw >= 5 && st.read === 0) warn.push(n);
   });
 

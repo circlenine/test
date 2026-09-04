@@ -1,11 +1,15 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  K002ver  （2026/09/02）  ★★★   ← もとは version 232
+ *  ★★★  K003ver  （2026/09/02）  ★★★   ← もとは version 232
  *
  *  ファイル記号: K=コード.gs / L=LineReport.gs / E=Extras.gs
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [K003ver]
+ *   ・開いたときの通知を toast（右下からひょっこり出るタイプ）に変更
+ *     画面を止めないので、スマホでも待たされない。最終更新も一緒に出す
  *
  *  [K002ver] 速度改善のみ。動作は変えていない
  *   ・開いたときの自動整形をやめた（スマホでフリーズする最大の原因）
@@ -232,7 +236,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const K_VERSION = "K002ver";
+const K_VERSION = "K003ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -1682,11 +1686,42 @@ function onOpen() {
     .addSubMenu(m6)
     .addToUi();
 
-  // 開いたときの自動整形はやめた。
-  // ここで showSyncDialog_ を呼ぶと、開くたびにそのタブを丸ごと整形し直す。
-  // 並び替え・全行の色・枠線・行の高さ・フィルタの張り直しが毎回走るため、
-  // スマホでは数十秒固まっていた。
-  // 整形が要るときは「🅱️ ふだんの整形」→「🔄 いま開いているタブだけ整形する」から。
+  // 開いたときは、右下に小さく出すだけにする。
+  //
+  // これまでは showSyncDialog_ を呼んでいたが、あれは画面を止める形の
+  // ダイアログで、しかも開くたびにそのタブを丸ごと整形し直していた
+  // （並び替え・全行の色・枠線・行の高さ・フィルタの張り直し）。
+  // スマホでは数十秒固まる原因だった。
+  //
+  // toast は右下からひょっこり出て自然に消えるだけで、画面を止めない。
+  // 整形も走らせないので、開いた瞬間は一切待たされない。
+  try {
+    const name = SpreadsheetApp.getActiveSheet().getName();
+    if (ALL_TABS.indexOf(name) !== -1) {
+      showOpenToast_(name);
+    }
+  } catch (e) {}
+}
+
+/**
+ * 開いたときに右下へ出す小さな通知。
+ * 画面を止めないので、スマホでも待たされない。
+ */
+function showOpenToast_(name) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sub = "";
+  try {
+    const sh = ss.getSheetByName(name);
+    if (sh) {
+      const stamp = String(sh.getRange("B1").getValue() || "").replace("🔄最終更新：", "");
+      if (stamp) sub = "最終更新 " + stamp;
+    }
+  } catch (e) {}
+  ss.toast(
+    (sub ? sub + "\n" : "") + "整形は メニュー →「🔄 いま開いているタブだけ整形する」",
+    "📋 " + name,
+    6
+  );
 }
 
 function menuFormatCurrent() {

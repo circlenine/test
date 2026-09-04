@@ -1,12 +1,19 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C008ver  （2026/09/04）  ★★★   ← もとは version 232
+ *  ★★★  C009ver  （2026/09/04）  ★★★   ← もとは version 232
  *
  *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
  *  ※ Apps Script 上のファイル名も「Code」に統一してください（旧: コード）
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C009ver]
+ *   ・取込の時間帯を 17:00〜翌05:15（29:15）に戻した（C008の18:00〜05:30は誤り）
+ *   ・スクショ1枚に乗車記録が2件以上写っている場合の返信を分かりやすくした
+ *     「読み取れた3件のうち1件」のように、何件中の何件が不備なのかを書く
+ *     ※取り込み自体は前から複数件に対応している（1枚から全部拾う）
+ *   ・AIへの指示文に「1枚に何件写っていても全部返す」を明記した
  *
  *  [C008ver]
  *   ・スクショの取込時間を 18:00〜翌05:30（29:30）に変更した
@@ -273,7 +280,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C008ver";
+const CODE_VERSION = "C009ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -301,10 +308,10 @@ const INFO_TAB      = "説明";
 const ALL_TABS      = PERSONAL_TABS.concat(AREA_TABS, FLAG_TABS);
 
 // オプチャ取込の条件
-// 僕らが実際に走れるのは 18:00〜翌05:30（＝29:30）。この外の乗車は取り込まない
-const OPUCHA_FROM_MIN  = 18 * 60;      // 18:00
-const OPUCHA_TO_MIN    = 5 * 60 + 30;  // 翌05:30（29:30）
-const OPUCHA_HOURS_TEXT = "18:00〜翌05:30（29:30）";
+// 僕らが実際に走れるのは 17:00〜翌05:15（＝29:15）。この外の乗車は取り込まない
+const OPUCHA_FROM_MIN  = 17 * 60;      // 17:00
+const OPUCHA_TO_MIN    = 5 * 60 + 15;  // 翌05:15（29:15）
+const OPUCHA_HOURS_TEXT = "17:00〜翌05:15（29:15）";
 const OPUCHA_MIN_MONEY = 1000;         // これ未満は情報不足として除外
 const OPUCHA_EXCLUDE   = /(didi|ディディ|ﾃﾞｨﾃﾞｨ|連続配車|連続 *配車)/i;
 const ROUTE_SEP        = /[〜～\-–—→⇒➡▶▷>]|から/;
@@ -892,9 +899,12 @@ function handleOpuchaImage_(ev, sentAt) {
 
   const who = opuchaSenderName_(ev);   // アイコン名（表示名）
 
-  const r = { idx: idx, ok: 0, ng: [] };
+  // read は「そのスクショから読み取れた乗車記録の件数」。
+  // 1枚に2件以上写っていることがあるので、何件中の何件が不備かを返信に書くために持つ。
+  const r = { idx: idx, read: 0, ok: 0, ng: [] };
   try {
     const list = opuchaFromImage_(mid);
+    r.read = list.length;
     if (!list.length) {
       r.ng.push("乗車記録が写っていません（時刻・金額・乗り場のどれも読み取れませんでした）");
     } else {
@@ -1015,7 +1025,11 @@ function opuchaReplyText_(who, arr, total) {
 
   bad.forEach(function (x) {
     // imageSet が付かない送り方でも、2枚目以降なら「〇枚目」と書く
-    lines.push((total > 1 || x.idx > 1) ? "【" + x.idx + "枚目】" : "【このスクショ】");
+    const head = (total > 1 || x.idx > 1) ? "【" + x.idx + "枚目】" : "【このスクショ】";
+    // 1枚に2件以上写っていたときは、何件中の何件がダメだったのかを添える
+    lines.push(head + (x.read > 1
+      ? " 読み取れた" + x.read + "件のうち" + x.ng.length + "件が不備です"
+      : ""));
     x.ng.slice(0, 8).forEach(function (m) { lines.push("　・" + m); });
     if (x.ng.length > 8) lines.push("　・ほか" + (x.ng.length - 8) + "件");
     lines.push("");
@@ -1062,10 +1076,12 @@ function geminiReady_() {
 const OPUCHA_IMAGE_PROMPT =
   "これはタクシー運転手のグループチャットのスクリーンショットです。\n" +
   "写っている投稿から「1回の乗車の記録」を全部抜き出してください。\n" +
+  "1枚のスクショに投稿が2件以上写っていることがよくあります。\n" +
+  "写っているぶんは、上から順に1件ずつ、すべて配列に入れてください。\n" +
   "出力は JSON の配列だけ。前置きも説明も書かないでください。\n" +
   "各要素の形:\n" +
   '{"time":"HH:MM","money":12300,"place":"乗り場","dest":"行先","wait":15,"note":"補足"}\n' +
-  "・time は乗車した時刻。26:15 や 29:30 のような24時超えの表記は 02:15 / 05:30 に直す\n" +
+  "・time は乗車した時刻。26:15 や 29:15 のような24時超えの表記は 02:15 / 05:15 に直す\n" +
   "・money は金額の数値だけ（円・カンマは外す）\n" +
   "・place は乗せた場所、dest は降ろした場所。分からなければ空文字\n" +
   "・wait は待ち時間の分数。分からなければ null\n" +

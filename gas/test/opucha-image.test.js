@@ -109,26 +109,26 @@ function ok(cond, label) {
 }
 function has(s, needle, label) { ok(String(s).indexOf(needle) !== -1, label + '  … 実際: ' + JSON.stringify(String(s).slice(0, 160))); }
 
-console.log('\n■ 取込の時間帯は 18:00〜翌05:30');
+console.log('\n■ 取込の時間帯は 17:00〜翌05:15');
 // const は ctx に生えないので、中で評価して取り出す
 const K = n => vm.runInContext(n, ctx);
-ok(K('OPUCHA_FROM_MIN') === 18 * 60, 'OPUCHA_FROM_MIN = 18:00');
-ok(K('OPUCHA_TO_MIN') === 5 * 60 + 30, 'OPUCHA_TO_MIN = 翌05:30');
-ok(K('OPUCHA_HOURS_TEXT') === '18:00〜翌05:30（29:30）', '文面用の時間帯も同じ');
+ok(K('OPUCHA_FROM_MIN') === 17 * 60, 'OPUCHA_FROM_MIN = 17:00');
+ok(K('OPUCHA_TO_MIN') === 5 * 60 + 15, 'OPUCHA_TO_MIN = 翌05:15');
+ok(K('OPUCHA_HOURS_TEXT') === '17:00〜翌05:15（29:15）', '文面用の時間帯も同じ');
 
 console.log('\n■ 時間外は「乗車不可な時間」として理由付きで落とす');
 resetSheets();
 let r = F('writeOpuchaRecords_')([
-  { time: '17:30', money: 12000, place: '新地4' },   // 18時より前 → 対象外
-  { time: '05:45', money: 12000, place: '新地4' },   // 05:30より後 → 対象外
-  { time: '29:30', money: 12000, place: '新地4' },   // = 05:30 ちょうど → 入る
-  { time: '18:00', money: 12000, place: '新地7' }    // ちょうど18:00 → 入る
+  { time: '16:59', money: 12000, place: '新地4' },   // 17時より前 → 対象外
+  { time: '05:16', money: 12000, place: '新地4' },   // 05:15より後 → 対象外
+  { time: '29:15', money: 12000, place: '新地4' },   // = 05:15 ちょうど → 入る
+  { time: '17:00', money: 12000, place: '新地7' }    // ちょうど17:00 → 入る
 ], 'MID1', new CtxDate(2026, 8, 3));
 ok(r.wrote === 2, '境目ちょうどの2件だけ取り込む（実際 ' + r.wrote + '件）');
 ok(r.skipped.length === 2, '落としたのは2件（実際 ' + r.skipped.length + '件）');
-has(r.skipped[0], '私たちでは乗車不可な時間のため、除外します', '17:30 の理由に指定の文言が入る');
-has(r.skipped[0], '18:00〜翌05:30', '理由に時間帯そのものが書いてある');
-has(r.skipped[1], '05:45', 'どの行のことか分かる目印が付く');
+has(r.skipped[0], '私たちでは乗車不可な時間のため、除外します', '16:59 の理由に指定の文言が入る');
+has(r.skipped[0], '17:00〜翌05:15', '理由に時間帯そのものが書いてある');
+has(r.skipped[1], '05:16', 'どの行のことか分かる目印が付く');
 
 console.log('\n■ そのほかの不備も、理由を具体的に返す');
 resetSheets();
@@ -167,7 +167,7 @@ has(t, 'スクショ2枚', '何枚だったかを書く');
 
 t = F('opuchaReplyText_')('ダイスケ', [
   { idx: 1, ok: 1, ng: [] },
-  { idx: 2, ok: 0, ng: ['17:30 ￥12,000 新地4 → 乗車時刻が 18:00〜翌05:30（29:30） の外です。私たちでは乗車不可な時間のため、除外します'] }
+  { idx: 2, ok: 0, read: 1, ng: ['16:59 ￥12,000 新地4 → 乗車時刻が 17:00〜翌05:15（29:15） の外です。私たちでは乗車不可な時間のため、除外します'] }
 ], 2);
 has(t, 'ダイスケ様データは', '「〇〇様データは」の形になっている');
 has(t, 'レポート作成に不十分と判断', '指定の言い回しが入っている');
@@ -219,6 +219,26 @@ sent.length = 0;
 F('lineReply_')('rt', '');
 F('lineReply_')('rt', '   ');
 ok(sent.length === 0, '中身が無ければ通知しない');
+
+console.log('\n■ スクショ1枚に乗車記録が2件以上写っていても全部拾う');
+resetSheets();
+r = F('writeOpuchaRecords_')([
+  { time: '22:10', money: 12000, place: '新地4' },
+  { time: '23:40', money:  8000, place: '新地7' },
+  { time: '01:20', money:  3000, place: 'ドン2' },
+  { time: '16:00', money: 15000, place: '新地4' }   // 時間外
+], 'MID4', new CtxDate(2026, 8, 3));
+ok(r.wrote === 3, '1枚から3件とも書き込む（実際 ' + r.wrote + '件）');
+ok(r.skipped.length === 1, '時間外の1件だけ落ちる');
+has(r.skipped[0], '16:00', '落ちたのがどれかは時刻で分かる');
+
+console.log('\n■ 1枚に複数件あったときは「何件中の何件が不備か」を書く');
+t = F('opuchaReplyText_')('ダイスケ',
+  [{ idx: 1, read: 4, ok: 3, ng: ['16:00 ￥15,000 新地4 → 乗車時刻が 17:00〜翌05:15（29:15） の外です。私たちでは乗車不可な時間のため、除外します'] }], 1);
+has(t, '読み取れた4件のうち1件が不備です', '何件中の何件かが分かる');
+has(t, 'ほか3件は取り込みました', '通ったぶんの件数も出る');
+t = F('opuchaReplyText_')('ダイスケ', [{ idx: 1, read: 1, ok: 0, ng: ['乗り場が読み取れません'] }], 1);
+ok(t.indexOf('のうち') === -1, '1件だけのときは件数の但し書きを付けない');
 
 console.log('\n■ imageSet が無い連投でも「〇枚目」と書く');
 t = F('opuchaReplyText_')('ダイスケ', [{ idx: 2, ok: 0, ng: ['乗り場が読み取れません'] }], 1);

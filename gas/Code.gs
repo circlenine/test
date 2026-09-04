@@ -1,12 +1,21 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C006ver  （2026/09/02）  ★★★   ← もとは version 232
+ *  ★★★  C007ver  （2026/09/02）  ★★★   ← もとは version 232
  *
  *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
  *  ※ Apps Script 上のファイル名も「Code」に統一してください（旧: コード）
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C007ver]
+ *   ・スクショ（画像）を送るとオプチャ情報として取り込むようにした
+ *     テキスト＝自分の乗車記録／画像＝オプチャ情報、で区別する
+ *     画像は誰が送ってもよい（テキストは登録済みの5人だけ）
+ *     A列は「ｵﾌﾟﾁｬ」。個人タブには入れず、乗り場から決まるタブへ
+ *     読み取れなかったときだけ、その場で返信する
+ *   ・読めないテキストを parseOpuchaMessage_ に渡すのをやめた
+ *     この関数は定義が無く、呼ぶとエラーで握りつぶされていた
  *
  *  [C006ver]
  *   ・K列の ⚠️ が消えなくなる不具合を修正
@@ -253,7 +262,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C006ver";
+const CODE_VERSION = "C007ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -812,32 +821,239 @@ function handleEvent_(ev) {
     deleteByMessageId_(ev.unsend.messageId);
     return;
   }
-  if (ev.type !== "message" || !ev.message || ev.message.type !== "text") return;
-
-  const userId = (ev.source && ev.source.userId) || "";
-  const tabName = SENDER_MAP[userId];
-  if (!tabName) return;                       // 登録外の人は無視
+  if (ev.type !== "message" || !ev.message) return;
 
   const sentAt = new Date(ev.timestamp || Date.now());
 
-  // ① まず、いつもの4行フォーマットとして読めるか試す
-  const rec = parseRideMessage_(ev.message.text, sentAt);
-  if (rec) {
-    rec.ownerTab  = tabName;
-    rec.sender    = tabName;
-    rec.messageId = ev.message.id || "";
-    writeRecord_(rec);
+  // --- 画像 ＝ オプチャ情報（他所から持ってきた情報）---
+  // テキストは「自分の乗車記録」、画像は「オプチャのスクショ」と決めている。
+  // 画像は誰が送っても受け付ける（各自がオプチャを見て、載せたいものを送る運用）。
+  if (ev.message.type === "image") {
+    handleOpuchaImage_(ev, sentAt);
     return;
   }
 
-  // ② 読めなければ、オープンチャット等の自由文として試す
-  const list = parseOpuchaMessage_(ev.message.text, sentAt);
-  list.forEach(function (r, i) {
-    r.ownerTab  = tabName;          // 投稿した人の個人タブへ
-    r.sender    = OPUCHA_TAB;       // ただしA列は「ｵﾌﾟﾁｬ」
-    r.messageId = (ev.message.id || "") + "-" + i;
-    writeRecord_(r);
+  if (ev.message.type !== "text") return;
+
+  // --- テキスト ＝ 自分の乗車記録 ---
+  // こちらは登録済みの5人だけ。誰の実績かを個人タブに記録するため。
+  const userId = (ev.source && ev.source.userId) || "";
+  const tabName = SENDER_MAP[userId];
+  if (!tabName) return;
+
+  const rec = parseRideMessage_(ev.message.text, sentAt);
+  if (!rec) return;              // 記録として読めないものは雑談。何もしない
+  rec.ownerTab  = tabName;
+  rec.sender    = tabName;
+  rec.messageId = ev.message.id || "";
+  writeRecord_(rec);
+}
+
+
+/* ============ 3-2. 画像（オプチャのスクショ）の取り込み ============ */
+
+/**
+ * 送られてきたスクショから乗車記録を読み取って、A列を「ｵﾌﾟﾁｬ」として記録する。
+ * 個人タブには入れない。乗り場から決まるタブ（多くは関空）に入れる。
+ * 読み取れなかったときだけ、送信者に返信する。
+ */
+function handleOpuchaImage_(ev, sentAt) {
+  const mid = (ev.message && ev.message.id) || "";
+  const reply = ev.replyToken || "";
+
+  // LINEは応答が遅いと同じイベントを送り直してくる。二重に記録しないよう印を置く
+  const cache = CacheService.getScriptCache();
+  if (mid && cache.get("IMG_" + mid)) return;
+  if (mid) cache.put("IMG_" + mid, "1", 600);
+
+  let list;
+  try {
+    list = opuchaFromImage_(mid);
+  } catch (e) {
+    logErr_("opuchaImage", e);
+    lineReply_(reply, "📷 スクショを読み取れませんでした\n" + e.message);
+    return;
+  }
+
+  if (!list.length) {
+    lineReply_(reply,
+      "📷 このスクショからは乗車記録を読み取れませんでした\n\n" +
+      "・時刻／金額／乗り場 のどれかが写っていない\n" +
+      "・金額が￥" + OPUCHA_MIN_MONEY.toLocaleString() + "未満\n" +
+      "・時刻が 17:00〜翌05:15 の外\n" +
+      "のいずれかだと取り込めません。");
+    return;
+  }
+
+  const n = writeOpuchaRecords_(list, mid);
+  if (n === 0) {
+    lineReply_(reply, "📷 読み取れましたが、すべて登録済みでした");
+  }
+  // 取り込めたときは返信しない（通知が増えるだけなので）
+}
+
+/** LINEに返信する。返信できなくても処理は止めない */
+function lineReply_(replyToken, text) {
+  if (!replyToken) return;
+  try {
+    UrlFetchApp.fetch("https://api.line.me/v2/bot/message/reply", {
+      method: "post",
+      headers: { "Content-Type": "application/json",
+                 "Authorization": "Bearer " + getToken_() },
+      payload: JSON.stringify({
+        replyToken: replyToken,
+        messages: [{ type: "text", text: String(text).slice(0, 4900) }]
+      }),
+      muteHttpExceptions: true
+    });
+  } catch (e) { logErr_("lineReply", e); }
+}
+
+/**
+ * Geminiの鍵とモデル名は LineReport.gs 側にある。
+ * 同じプロジェクトに置いてあれば使えるが、無い場合にそなえて確かめてから呼ぶ。
+ * （呼べないと ReferenceError になり、原因が分かりにくいため）
+ */
+function geminiReady_() {
+  if (typeof getGeminiKey_ !== "function" || typeof getGeminiModel_ !== "function") {
+    throw new Error("LineReport.gs が入っていません。同じプロジェクトに追加してください。");
+  }
+  const k = getGeminiKey_();
+  if (!k) throw new Error("Geminiのキーが未設定です（メニュー「🤖 Geminiキーを設定」）");
+  return { key: k, model: getGeminiModel_() };
+}
+
+/** スクショを読む指示文。JSONだけを返させる */
+const OPUCHA_IMAGE_PROMPT =
+  "これはタクシー運転手のグループチャットのスクリーンショットです。\n" +
+  "写っている投稿から「1回の乗車の記録」を全部抜き出してください。\n" +
+  "出力は JSON の配列だけ。前置きも説明も書かないでください。\n" +
+  "各要素の形:\n" +
+  '{"time":"HH:MM","money":12300,"place":"乗り場","dest":"行先","wait":15,"note":"補足"}\n' +
+  "・time は乗車した時刻。26:15 のような24時超えの表記は 02:15 に直す\n" +
+  "・money は金額の数値だけ（円・カンマは外す）\n" +
+  "・place は乗せた場所、dest は降ろした場所。分からなければ空文字\n" +
+  "・wait は待ち時間の分数。分からなければ null\n" +
+  "・note はそれ以外の補足。無ければ空文字\n" +
+  "・乗車記録でない雑談は含めない\n" +
+  "・1件も無ければ [] だけを返す";
+
+/**
+ * LINEから画像を取ってきて、Geminiに読ませる。
+ * 戻り値は {time, money, place, dest, wait, note} の配列。
+ */
+function opuchaFromImage_(messageId) {
+  if (!messageId) throw new Error("画像のIDが取れませんでした");
+  const g = geminiReady_();
+
+  // ① LINEから画像を取る
+  const res = UrlFetchApp.fetch(
+    "https://api-data.line.me/v2/bot/message/" + encodeURIComponent(messageId) + "/content",
+    { headers: { "Authorization": "Bearer " + getToken_() }, muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) {
+    throw new Error("画像を取得できませんでした（" + res.getResponseCode() + "）");
+  }
+  const blob = res.getBlob();
+
+  // ② Geminiに読ませる
+  const out = UrlFetchApp.fetch(
+    "https://generativelanguage.googleapis.com/v1beta/models/" + g.model +
+    ":generateContent?key=" + encodeURIComponent(g.key),
+    { method: "post", contentType: "application/json", muteHttpExceptions: true,
+      payload: JSON.stringify({ contents: [{ parts: [
+        { text: OPUCHA_IMAGE_PROMPT },
+        { inline_data: { mime_type: blob.getContentType() || "image/jpeg",
+                         data: Utilities.base64Encode(blob.getBytes()) } }
+      ]}]})});
+  if (out.getResponseCode() !== 200) {
+    let why = out.getContentText().slice(0, 150);
+    try { why = JSON.parse(out.getContentText()).error.message; } catch (e) {}
+    throw new Error("AIが読めませんでした（" + out.getResponseCode() + "）" + why);
+  }
+
+  // ③ JSONを取り出す（``` で囲って返してくることがあるので外す）
+  let text = "";
+  try {
+    text = JSON.parse(out.getContentText()).candidates[0].content.parts[0].text;
+  } catch (e) { throw new Error("AIの返事を読めませんでした"); }
+  const m = text.match(/\[[\s\S]*\]/);
+  if (!m) return [];
+  let arr;
+  try { arr = JSON.parse(m[0]); } catch (e) { throw new Error("AIの返事がJSONではありませんでした"); }
+  return Array.isArray(arr) ? arr : [];
+}
+
+/**
+ * 読み取った内容を、条件で絞ってからシートに書く。
+ * 個人タブには入れない。A列は「ｵﾌﾟﾁｬ」。
+ * 戻り値は実際に書いた件数。
+ */
+function writeOpuchaRecords_(list, messageId, bizDate) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const buckets = {};
+  ALL_TABS.forEach(function (n) { buckets[n] = []; });
+  let wrote = 0;
+
+  list.forEach(function (x, i) {
+    const money = parseInt(String(x.money).replace(/[^0-9]/g, ""), 10);
+    if (isNaN(money) || money < OPUCHA_MIN_MONEY) return;
+
+    const time = toHHMM_(String(x.time || "").replace(/[^\d:：\.]/g, ""));
+    if (!time) return;
+
+    // 夜勤の時間帯（17:00〜翌05:15）から外れるものは取り込まない
+    const tm = time.split(":");
+    const min = parseInt(tm[0], 10) * 60 + parseInt(tm[1], 10);
+    if (!(min >= OPUCHA_FROM_MIN || min <= OPUCHA_TO_MIN)) return;
+
+    const note = [x.dest ? "行先：" + x.dest : "", x.note || ""].filter(String).join(" ");
+    const all = [x.place, x.dest, x.note].join(" ");
+    if (OPUCHA_EXCLUDE.test(all)) return;      // DiDi・連続配車は対象外
+
+    const tp = tidyPlace_(String(x.place || ""));
+    if (!tp.place) return;
+
+    const w = parseInt(x.wait, 10);
+    const rec = {
+      bizDate: bizDate || businessDate_(new Date()),
+      time: time, money: money,
+      wait: isNaN(w) ? "" : (w + "分"),
+      startTime: "",
+      place: tp.place,
+      method: "",
+      other: [note, tp.toOther].filter(String).join(" "),
+      sender: OPUCHA_TAB,                      // A列は「ｵﾌﾟﾁｬ」
+      mark: "🆕",
+      messageId: messageId ? (messageId + "-" + i) : ""
+    };
+
+    const row = buildRow_(rec);
+    const cat = categoryOf_(rec.place);
+    if (buckets[cat]) buckets[cat].push(row);
+    // 行先が関空なら関空タブにも入れる（オプチャ情報の多くはこれ）
+    if (KANKU_RE.test(all)) buckets["関空"].push(row.slice());
+    if (BARASI_RE.test(all)) buckets["ﾊﾞﾗｼ"].push(row.slice());
+    wrote++;
   });
+
+  const touched = [];
+  ALL_TABS.forEach(function (name) {
+    const rows = buckets[name];
+    if (!rows.length) return;
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const st = Math.max(sh.getLastRow() + 1, START_ROW);
+    if (sh.getMaxRows() < st + rows.length) {
+      sh.insertRowsAfter(sh.getMaxRows(), st + rows.length - sh.getMaxRows());
+    }
+    sh.getRange(st, 1, rows.length, LAST_COL).setValues(rows);
+    touched.push(name);
+  });
+  touched.forEach(function (n) {
+    try { formatTab_(ss.getSheetByName(n)); } catch (e) { logErr_("format:" + n, e); }
+  });
+  if (touched.length) touchStamp_(ss, touched);
+  return wrote;
 }
 
 
@@ -2031,52 +2247,66 @@ function menuPasteImport() {
     HtmlService.createHtmlOutput(html).setWidth(420).setHeight(420), "📥 貼り付け取込");
 }
 
+/**
+ * 貼り付けた文章からオプチャ情報を取り込む。
+ * 画像のときと同じ仕組み（Geminiに読ませて writeOpuchaRecords_ で書く）を使う。
+ * 以前は parseOpuchaMessage_ を呼んでいたが、その関数は定義が無く、
+ * このメニューは押すと必ず落ちていた。
+ */
 function importPastedText(text, dateStr) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ensureOpuchaTab_(ss);
+  if (!String(text || "").trim()) return "⚠️ 文章が空です。";
 
   let base = new Date();
   if (dateStr) { const p = dateStr.split("-"); base = new Date(+p[0], +p[1] - 1, +p[2], 20, 0, 0); }
 
-  const list = parseOpuchaMessage_(text, base);
+  let list;
+  try {
+    list = opuchaFromText_(text);
+  } catch (e) {
+    return "⚠️ 読み取れませんでした。\n" + e.message;
+  }
   if (!list.length) {
     return "⚠️ 取り込めるものがありませんでした。\n\n" +
            "次のどれかに当てはまると除外されます:\n" +
            "・DiDi / 連続配車 を含む\n" +
            "・時刻が 17:00〜翌05:15 の外\n" +
-           "・金額が文章中に無い（写真だけ等）\n" +
-           "・経路（〜 や → ）が書かれていない";
+           "・金額が￥" + OPUCHA_MIN_MONEY.toLocaleString() + "未満、または読み取れない\n" +
+           "・乗り場が書かれていない";
   }
 
-  const buckets = {}; ALL_TABS.forEach(function (n) { buckets[n] = []; });
-  const lines = [];
-  list.forEach(function (r, i) {
-    r.ownerTab = categoryOf_(r.place);
-    r.sender   = OPUCHA_TAB;
-    r.mark     = "🆕";
-    r.messageId = "";                       // 手打ち扱い（再構築で消えない）
-    const row = buildRow_(r);
-    buckets[categoryOf_(r.place)].push(row);
-    if (r.isKanku)  buckets["関空"].push(row.slice());
-    if (r.isBarasi) buckets["ﾊﾞﾗｼ"].push(row.slice());
-    lines.push("・" + r.time + " ￥" + r.money.toLocaleString() + " " + r.place);
-  });
+  const n = writeOpuchaRecords_(list, "", base);
+  if (!n) return "⚠️ 条件に合うものがありませんでした（時間帯・金額の下限をご確認ください）。";
 
-  const touched = [];
-  ALL_TABS.forEach(function (name) {
-    const rows = buckets[name];
-    if (!rows.length) return;
-    const sh = ss.getSheetByName(name);
-    if (!sh) return;
-    const st = Math.max(sh.getLastRow() + 1, START_ROW);
-    if (sh.getMaxRows() < st + rows.length) sh.insertRowsAfter(sh.getMaxRows(), st + rows.length - sh.getMaxRows());
-    sh.getRange(st, 1, rows.length, LAST_COL).setValues(rows);
-    touched.push(name);
+  const lines = list.slice(0, 20).map(function (x) {
+    return "・" + x.time + " ￥" + Number(x.money).toLocaleString() + " " + (x.place || "");
   });
-  touched.forEach(function (n) { try { formatTab_(ss.getSheetByName(n)); } catch (e) {} });
-  if (touched.length) touchStamp_(ss, touched);
+  return "✅ " + n + "件を取り込みました（A列は「ｵﾌﾟﾁｬ」）\n──────────────\n" +
+         lines.join("\n") + (list.length > 20 ? "\n…ほか" + (list.length - 20) + "件" : "");
+}
 
-  return "✅ " + list.length + "件を取り込みました（A列は「ｵﾌﾟﾁｬ」）\n──────────────\n" + lines.join("\n");
+/** 貼り付けた文章から乗車記録を抜き出す（画像のときと同じ指示文を使う） */
+function opuchaFromText_(text) {
+  const g = geminiReady_();
+  const out = UrlFetchApp.fetch(
+    "https://generativelanguage.googleapis.com/v1beta/models/" + g.model +
+    ":generateContent?key=" + encodeURIComponent(g.key),
+    { method: "post", contentType: "application/json", muteHttpExceptions: true,
+      payload: JSON.stringify({ contents: [{ parts: [
+        { text: OPUCHA_IMAGE_PROMPT.replace("スクリーンショットです", "書き起こしです") +
+                "\n\n----\n" + String(text).slice(0, 20000) }
+      ]}]})});
+  if (out.getResponseCode() !== 200) {
+    let why = out.getContentText().slice(0, 150);
+    try { why = JSON.parse(out.getContentText()).error.message; } catch (e) {}
+    throw new Error("AIが読めませんでした（" + out.getResponseCode() + "）" + why);
+  }
+  let t = "";
+  try { t = JSON.parse(out.getContentText()).candidates[0].content.parts[0].text; }
+  catch (e) { throw new Error("AIの返事を読めませんでした"); }
+  const m = t.match(/\[[\s\S]*\]/);
+  if (!m) return [];
+  try { const a = JSON.parse(m[0]); return Array.isArray(a) ? a : []; }
+  catch (e) { throw new Error("AIの返事がJSONではありませんでした"); }
 }
 
 

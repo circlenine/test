@@ -50,10 +50,14 @@ ctx.DriveApp = {
 const toasts = [], alerts = [], cells = {};
 let uiWorks = true;
 ctx.SpreadsheetApp = {
+  flush: () => {},
+  newDataValidation: () => ({ requireCheckbox: () => ({ build: () => ({}) }) }),
   getActiveSpreadsheet: () => ({
     toast: (m, t) => toasts.push({ t: t, m: m }),
     getSheetByName: n => (n === '説明')
-      ? { getRange: a1 => ({ setValue: v => { cells[a1] = String(v); } }) } : null
+      ? { getRange: a1 => ({ setValue: v => { cells[a1] = String(v); } }) }
+      : (n === 'そうさ' ? panel : null),
+    insertSheet: () => (panel = mkPanel())
   }),
   getUi: () => {
     if (!uiWorks) throw new Error('ダイアログは使えません');
@@ -70,7 +74,63 @@ ctx.PropertiesService = { getScriptProperties: () => ({
   setProperty: (k, v) => { props[k] = String(v); },
   deleteProperty: k => { delete props[k]; } })};
 let gh = null;      // {dir:[{name,path,type}], raw:{path:内容}, fail:{code,msg}}
-ctx.ScriptApp = { getOAuthToken: () => 'tok', getScriptId: () => 'SID' };
+ctx.ScriptApp = { getOAuthToken: () => 'tok', getScriptId: () => 'SID',
+  getProjectTriggers: () => triggers,
+  deleteTrigger: t => { triggers = triggers.filter(x => x !== t); },
+  newTrigger: fn => {
+    const b = { _fn: fn, _kind: '' };
+    const api = {
+      forSpreadsheet: () => api, onEdit: () => { b._kind = 'edit'; return api; },
+      timeBased: () => api, everyMinutes: () => { b._kind = 'min'; return api; },
+      create: () => { triggers.push({ getHandlerFunction: () => b._fn, _kind: b._kind });
+                      return b; }
+    };
+    return api;
+  }};
+let triggers = [];
+ctx.LockService = { getScriptLock: () => ({ tryLock: () => lockFree,
+  releaseLock() {}, waitLock() {} }) };
+let lockFree = true;
+ctx.logErr_ = (w, e) => { errs.push(w + ':' + (e && e.message ? e.message : e)); };
+const errs = [];
+// 「そうさ」タブの偽物
+let panel;
+function mkPanel() {
+  const cells = {};
+  return {
+    _cells: cells,
+    getName: () => 'そうさ',
+    getMaxRows: () => 100,
+    clear: () => {},
+    setFrozenRows: () => {}, setRowHeight: () => {}, setRowHeights: () => {},
+    setColumnWidth() { return this; },
+    insertCheckboxes() { return this; },
+    getRange: (r, c, nr, nc) => {
+      let px;
+      const R = {
+        setValue: v => { cells[r + ',' + c] = v; return px; },
+        getValue: () => cells[r + ',' + c],
+        getValues: () => {
+          const out = [];
+          for (let i = 0; i < (nr || 1); i++) {
+            const row = [];
+            for (let j = 0; j < (nc || 1); j++) {
+              const v = cells[(r + i) + ',' + (c + j)];
+              row.push(v === undefined ? '' : v);
+            }
+            out.push(row);
+          }
+          return out;
+        },
+        setValues: v => { v.forEach((vr, i) => vr.forEach((vv, j) => {
+          cells[(r + i) + ',' + (c + j)] = vv; })); return px; }
+      };
+      // 知らないメソッドを呼ばれても、つないで呼べるように自分（Proxy）を返す
+      px = new Proxy(R, { get: (t, k) => (k in t ? t[k] : () => px) });
+      return px;
+    }
+  };
+}
 
 /* ---- 偽の Apps Script API ---- */
 let project;            // サーバー側にあることになっている中身
@@ -140,7 +200,7 @@ function reset(driveFiles, projFiles) {
   Object.keys(cells).forEach(k => delete cells[k]);
   apiCalls = []; apiFail = null; uiWorks = true;
   Object.keys(props).forEach(k => delete props[k]);
-  gh = null;
+  gh = null; triggers = []; lockFree = true; errs.length = 0; panel = null;
   if (driveFiles) {
     const f = mkFolder('taxi-gas');
     driveFiles.forEach(([n, c, u]) => f._files.push(mkFile(n, c, u)));
@@ -357,6 +417,102 @@ F('menuUpdateStatus')();
 t(alerts[0].b.indexOf('github_pat_himitsu') === -1, '状態画面に鍵を出さない');
 has(alerts[0].b, '読み元：GitHub', '読み元は出す');
 t(JSON.stringify(cells).indexOf('github_pat_himitsu') === -1, 'シートにも書かない');
+
+console.log('\n■ そうさタブ（スマホアプリ用のボタン）');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+t(panel !== null, 'タブが作られた');
+let items = F('panelItems_')();
+// このテストでは 005-Updater しか読み込んでいないので、
+// 004-WebApp や 001-Code の機能は出てこないのが正しい
+t(items.length === 3, '入っている機能だけ並ぶ（' + items.length + '個）');
+t(items[0].fn === 'menuUpdateCode', '1つめは「コードを更新する」');
+t(items.every(x => F('panelHas_')(x.fn)), '並んだものは全部呼べる');
+t(items.every(x => x.fn !== 'menuFormatAll'), '入れていない機能は出さない');
+vm.runInContext('function menuFormatAll(){}', ctx);   // あとから足したことにする
+items = F('panelItems_')();
+t(items.length === 4, '足せば並ぶ');
+t(items.some(x => x.fn === 'menuFormatAll'), '足したものが出る');
+vm.runInContext('menuFormatAll = undefined', ctx);
+t(F('panelHas_')('menuUpdateCode') === true, 'ある関数は true');
+t(F('panelHas_')('そんな関数はない') === false, '無い関数は false');
+
+console.log('\n■ 見張りのしくみが入る');
+t(triggers.filter(x => x.getHandlerFunction() === 'panelOnEdit').length === 1,
+  'チェックした瞬間に動くトリガー');
+t(triggers.filter(x => x.getHandlerFunction() === 'panelWatch').length === 1,
+  '1分おきの見張り');
+F('menuMakePanel')();
+t(triggers.filter(x => x.getHandlerFunction() === 'panelWatch').length === 1,
+  '作り直しても二重にならない');
+F('menuPanelWatchOff')();
+t(triggers.filter(x => x.getHandlerFunction() === 'panelWatch').length === 0,
+  '見張りだけ止められる');
+t(triggers.filter(x => x.getHandlerFunction() === 'panelOnEdit').length === 1,
+  'onEdit のほうは残る');
+
+console.log('\n■ チェックすると動く');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+const TOP = 3;
+panel._cells[TOP + ',1'] = true;                       // 1行目＝コードを更新する
+F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 1,
+                            getRow: () => TOP }, value: 'TRUE' });
+t(panel._cells[TOP + ',1'] === false, '終わったらチェックが外れる');
+t(lastPut() !== undefined, '更新が実際に走った');
+const resRow = TOP + F('panelItems_')().length + 2;
+has(panel._cells[resRow + ',2'], '✅', '結果らんに出る');
+has(panel._cells[resRow + ',2'], 'コードを更新する', 'どれを動かしたか分かる');
+
+console.log('\n■ チェックを外したときは動かない');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 1,
+                            getRow: () => TOP }, value: 'FALSE' });
+t(lastPut() === undefined, '外したときは何もしない');
+
+console.log('\n■ 関係ない場所を触っても動かない');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 2,
+                            getRow: () => TOP }, value: 'TRUE' });
+t(lastPut() === undefined, 'B列を触っても動かない');
+F('panelOnEdit')({ range: { getSheet: () => ({ getName: () => 'ﾀﾞｲｽｹ' }),
+                            getColumn: () => 1, getRow: () => TOP }, value: 'TRUE' });
+t(lastPut() === undefined, '別のタブなら動かない');
+F('panelOnEdit')({});
+F('panelOnEdit')(null);
+t(errs.length === 0, '変な呼ばれ方をしても落ちない');
+
+console.log('\n■ 1分おきの見張りでも動く（アプリでonEditが効かないとき用）');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+panel._cells[TOP + ',1'] = true;
+F('panelWatch')();
+t(lastPut() !== undefined, '見張りが拾って動かす');
+t(panel._cells[TOP + ',1'] === false, 'チェックも外れる');
+
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+F('panelWatch')();
+t(lastPut() === undefined, 'チェックが無ければ何もしない');
+
+console.log('\n■ 二重に動かない');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+panel._cells[TOP + ',1'] = true;
+lockFree = false;                                   // すでに誰かが動かしている
+F('panelWatch')();
+t(lastPut() === undefined, '鍵が取れなければ動かさない');
+t(panel._cells[TOP + ',1'] === true, 'チェックも外さない（あとで拾えるように）');
+
+console.log('\n■ 失敗しても結果が残る');
+reset([]);                                          // ドライブに何も無い状態
+F('menuMakePanel')();
+panel._cells[TOP + ',1'] = true;
+F('panelWatch')();
+t(panel._cells[TOP + ',1'] === false, 'チェックは外れる（押しっぱなしにならない）');
+has(panel._cells[resRow + ',2'], '✅', '処理自体は最後まで通る');
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

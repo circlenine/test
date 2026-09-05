@@ -6,7 +6,7 @@
 
 | 記号 | ファイル | いま | Apps Script 側の名前 |
 |---|---|---|---|
-| **C** | `001-Code.gs`（統合スクリプト） | C021ver | `001-Code` |
+| **C** | `001-Code.gs`（統合スクリプト） | C022ver | `001-Code` |
 | **E** | `002-Extras.gs` | E004ver | `002-Extras` |
 | **L** | `003-LineReport.gs` | L005ver | `003-LineReport` |
 | **W** | `004-WebApp.gs`（みんなの記録ページ） | W005ver | `004-WebApp` |

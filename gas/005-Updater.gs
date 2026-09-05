@@ -517,3 +517,183 @@ function updRedeploy_() {
   });
   return "デプロイもやり直しました（版 " + ver.versionNumber + " / " + n + "件）";
 }
+
+
+/* ================================================================
+ *  そうさパネル
+ *
+ *  スマホの「Googleスプレッドシート」アプリでは、
+ *  この手のメニューが最初から出ない。ボタン（図形）も押せない。
+ *  でも「セルにチェックを入れる」ことはできる。
+ *
+ *  そこで、チェックを入れたら動く形にする。
+ *  　・チェックした瞬間に動く（onEdit のトリガー）
+ *  　・それが効かない機種のために、1分おきの見張りも置く
+ *  どちらか片方でも効けば動く。二重に動かないよう鍵をかけてある。
+ * ================================================================ */
+
+const PANEL_TAB   = "そうさ";
+const PANEL_TOP   = 3;    // ボタンが始まる行
+
+/** 上から順に並べるボタン。fn は無ければ出さない */
+function panelItems_() {
+  return [
+    { label: "🔄 コードを更新する",            fn: "menuUpdateCode",
+      note: "GitHubの新しいコードを取り込み、デプロイもやり直します" },
+    { label: "🔧 更新できる状態か調べる",      fn: "menuUpdateStatus",
+      note: "APIが使えるか、どこから読むかを見ます" },
+    { label: "💬 ページのURLをLINEに送る",     fn: "menuWebAppSendLine",
+      note: "グループLINEにリンクを送ります" },
+    { label: "🩺 ページが開けるか調べる",      fn: "menuWebAppCheck",
+      note: "みんなの記録ページが本当に開けるか、実際に試します" },
+    { label: "🧹 全タブをまとめて整形する",    fn: "menuFormatAll",
+      note: "並び順・色・行の高さを整えます" },
+    { label: "⏪ 前のコードに戻す",            fn: "menuRestoreCode",
+      note: "更新で壊れたとき用。直前の状態に戻します" }
+  ].filter(function (x) { return panelHas_(x.fn); });
+}
+
+/** その関数がこのプロジェクトに入っているか */
+function panelHas_(name) {
+  try { return eval("typeof " + name) === "function"; }
+  catch (e) { return false; }
+}
+
+/** 「そうさ」タブを作る／作り直す */
+function menuMakePanel() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(PANEL_TAB);
+  if (!sh) sh = ss.insertSheet(PANEL_TAB, 0);   // いちばん左に置く
+  sh.clear();
+  try { sh.getRange(1, 1, sh.getMaxRows(), 1).removeCheckboxes(); } catch (e) {}
+
+  const items = panelItems_();
+
+  sh.getRange("A1").setValue("チェックを入れると動きます（終わると自動で外れます）");
+  sh.getRange("A1:D1").merge().setFontWeight("bold").setBackground("#e8eaed")
+    .setVerticalAlignment("middle");
+
+  const rows = items.map(function (x) { return ["", x.label, x.note]; });
+  if (rows.length) {
+    sh.getRange(PANEL_TOP, 1, rows.length, 3).setValues(rows);
+    sh.getRange(PANEL_TOP, 1, rows.length, 1).insertCheckboxes();
+    sh.getRange(PANEL_TOP, 2, rows.length, 1).setFontWeight("bold").setFontSize(13);
+    sh.getRange(PANEL_TOP, 3, rows.length, 1).setFontSize(9).setFontColor("#5f6368");
+    sh.getRange(PANEL_TOP, 1, rows.length, 3).setVerticalAlignment("middle").setWrap(true);
+    sh.setRowHeights(PANEL_TOP, rows.length, 44);
+  }
+
+  const rRow = PANEL_TOP + rows.length + 1;
+  sh.getRange(rRow, 2).setValue("結果").setFontWeight("bold");
+  sh.getRange(rRow + 1, 2).setValue("（まだ何も動かしていません）")
+    .setFontSize(10).setVerticalAlignment("top").setWrap(true);
+  sh.getRange(rRow + 1, 2, 1, 2).merge();
+  sh.setRowHeight(rRow + 1, 140);
+
+  sh.setColumnWidth(1, 46).setColumnWidth(2, 260).setColumnWidth(3, 300);
+  sh.setFrozenRows(1);
+
+  panelInstall_();
+  updTell_("🧰 そうさタブを作りました",
+    "スマホのスプレッドシートアプリからは、このタブのチェックで動かせます。\n" +
+    "（アプリではメニューが出ないため）\n\n" +
+    "チェックを入れると動き、終わると自動でチェックが外れて、下に結果が出ます。");
+}
+
+/** チェックを見張るしくみを入れる（すでにあれば入れ直す） */
+function panelInstall_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    const f = t.getHandlerFunction();
+    if (f === "panelOnEdit" || f === "panelWatch") ScriptApp.deleteTrigger(t);
+  });
+  // ① チェックした瞬間に動く
+  ScriptApp.newTrigger("panelOnEdit").forSpreadsheet(ss).onEdit().create();
+  // ② ①が効かない機種向けの保険。1分おきに見にいく
+  ScriptApp.newTrigger("panelWatch").timeBased().everyMinutes(1).create();
+}
+
+/** 見張りを止める（1分おきの実行が気になるとき用） */
+function menuPanelWatchOff() {
+  let n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "panelWatch") { ScriptApp.deleteTrigger(t); n++; }
+  });
+  updTell_("⏸ 1分おきの見張りを止めました（" + n + "件）",
+    "チェックした瞬間に動くほう（onEdit）は残っています。\n" +
+    "スマホアプリから効かなくなったら、「🧰 そうさタブを作る」で入れ直してください。");
+}
+
+/** チェックされた瞬間に呼ばれる */
+function panelOnEdit(e) {
+  try {
+    if (!e || !e.range) return;
+    if (e.range.getSheet().getName() !== PANEL_TAB) return;
+    if (e.range.getColumn() !== 1) return;
+    if (String(e.value).toUpperCase() !== "TRUE") return;
+    panelRun_(e.range.getRow());
+  } catch (err) { logErr_("panelOnEdit", err); }
+}
+
+/** 1分おきの見張り。onEdit が効かない機種のための保険 */
+function panelWatch() {
+  try {
+    const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(PANEL_TAB);
+    if (!sh) return;
+    const n = panelItems_().length;
+    if (!n) return;
+    const vals = sh.getRange(PANEL_TOP, 1, n, 1).getValues();
+    for (let i = 0; i < n; i++) {
+      if (vals[i][0] === true) { panelRun_(PANEL_TOP + i); return; }   // 1回に1つだけ
+    }
+  } catch (err) { logErr_("panelWatch", err); }
+}
+
+/**
+ * その行のボタンを実行する。
+ * onEdit と見張りの両方から呼ばれるので、二重に動かないよう鍵をかける。
+ */
+function panelRun_(row) {
+  const items = panelItems_();
+  const idx = row - PANEL_TOP;
+  if (idx < 0 || idx >= items.length) return;
+  const item = items[idx];
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return;      // だれかが動かしている最中
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName(PANEL_TAB);
+  try {
+    // 先にチェックを外す。ここで外しておかないと、
+    // 見張りが同じものをもう一度動かしてしまう
+    if (sh) sh.getRange(row, 1).setValue(false);
+
+    panelSay_(sh, "⏳ " + item.label + " を実行中…");
+    let out = "";
+    try {
+      const fn = eval(item.fn);
+      fn();
+      out = "✅ " + item.label + " が終わりました";
+    } catch (err) {
+      logErr_("panel:" + item.fn, err);
+      out = "❌ " + item.label + " に失敗しました\n" + (err && err.message ? err.message : err);
+    }
+    panelSay_(sh, out);
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+/** 結果らんに書く */
+function panelSay_(sh, text) {
+  if (!sh) return;
+  try {
+    const n = panelItems_().length;
+    const row = PANEL_TOP + n + 2;
+    const now = new Date();
+    sh.getRange(row, 2).setValue(
+      pad2_(now.getHours()) + ":" + pad2_(now.getMinutes()) + "  " + text);
+    SpreadsheetApp.flush();
+  } catch (e) {}
+}

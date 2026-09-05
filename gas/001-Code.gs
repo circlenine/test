@@ -1,12 +1,17 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C021ver  （2026/09/06）  ★★★   ← もとは version 232
+ *  ★★★  C022ver  （2026/09/06）  ★★★   ← もとは version 232
  *
  *  ファイル記号: C=001-Code.gs / L=003-LineReport.gs / E=002-Extras.gs
  *  ※ Apps Script 上のファイル名も「001-Code」にそろえてください
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C022ver]
+ *   ・「そうさ」タブ（セルのチェックで動かす）用のメニューを足した
+ *     スマホのスプレッドシートアプリではメニューが出ないため、
+ *     チェックボックスから動かせるようにする
  *
  *  [C021ver]
  *   ・005-Updater.gs（コードの自動更新）用のメニューを足した
@@ -362,7 +367,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C021ver";
+const CODE_VERSION = "C022ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -2840,6 +2845,9 @@ function onOpen() {
       .addItem("🔄 コードを更新する", "menuUpdateCode")
       .addItem("🔧 更新できる状態か調べる", "menuUpdateStatus")
       .addItem("🔑 GitHubの鍵を設定", "menuSetGitHub")
+      .addSeparator()
+      .addItem("🧰 そうさタブを作る（スマホアプリ用）", "menuMakePanel")
+      .addItem("⏸ 1分おきの見張りを止める", "menuPanelWatchOff")
       .addSeparator()
       .addItem("💾 いまのコードを保存しておく", "menuBackupCode")
       .addItem("⏪ 前のコードに戻す", "menuRestoreCode");

@@ -489,7 +489,7 @@ t(triggers.filter(x => x.getHandlerFunction() === 'panelOnEdit').length === 1,
 console.log('\n■ チェックすると動く');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
-const TOP = 9;   // 見出しが8行目、ボタンは9行目から
+const TOP = 9;   // はじめて置いたときは 8行目が見出し、9行目からボタン
 panel._cells[TOP + ',1'] = true;                       // 1行目＝コードを更新する
 F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 1,
                             getRow: () => TOP }, value: 'TRUE' });
@@ -578,13 +578,13 @@ has(alerts[alerts.length - 1].b, '10行目', 'どこに何があったか教え�
 has(alerts[alerts.length - 1].b, '消されたら困るもの', '中身も見せる');
 t(triggers.length === 0, '止めたときはトリガーも作らない');
 
-console.log('\n■ 2回目からは、自分が置いたものとして上書きしてよい');
+console.log('\n■ 2回目は「もう置いてある」として、並べ直さない');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
 const firstHead = panel._cells['8,2'];
 F('menuMakePanel')();
-t(panel._cells['8,2'] === firstHead, '2回目も普通に置き直せる');
-has(alerts[alerts.length - 1].t, 'ボタンを置きました', '止まらない');
+t(panel._cells['8,2'] === firstHead, '見出しはそのまま');
+has(alerts[alerts.length - 1].t, 'もう置いてあります', '置き直さないと伝える');
 
 console.log('\n■ 説明タブを clear しない');
 reset([['001-Code.gs', 'あたらしい']]);
@@ -613,6 +613,68 @@ F('menuMakePanel')();
 has(alerts[alerts.length - 1].b, '保護をかけられませんでした', '黙って済ませない');
 has(alerts[alerts.length - 1].b, '誰でもチェックを押せます', '何が起きるか書く');
 t(F('panelIsProtected_')(panel) === false, '保護なしと分かる');
+
+console.log('\n■ 見やすいように動かしても、ちゃんと追いかける');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+t(F('panelHeadRow_')(panel) === 8, 'はじめは8行目');
+t(F('panelTop_')(panel) === 9, 'ボタンは9行目から');
+
+// 34行目あたりへ引っ越したことにする（実際のスプシでやったのと同じ状態）
+Object.keys(panel._cells).forEach(k => {
+  const m = k.match(/^(\d+),(\d+)$/);
+  if (!m) return;
+  const r = +m[1];
+  if (r < 8) return;
+  panel._cells[(r + 27) + ',' + m[2]] = panel._cells[k];
+  delete panel._cells[k];
+});
+props['PANEL_ROW'] = '8';                    // 覚えている場所は古いまま
+t(F('panelHeadRow_')(panel) === 35, '動かした先（35行目）を見つけ直す');
+t(F('panelTop_')(panel) === 36, 'ボタンの位置も追いつく');
+t(props['PANEL_ROW'] === '35', '新しい場所を覚え直す');
+
+console.log('\n■ 動かした先でもチェックが効く');
+panel._cells['36,1'] = true;                 // 引っ越し先の1つめ
+F('panelWatch')();
+t(lastPut() !== undefined, '見張りが拾って動かす');
+t(panel._cells['36,1'] === false, 'チェックも外れる');
+has(panel._cells[F('panelResultRow_')(panel) + ',2'], '✅', '結果も正しい行に出る');
+
+F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 1,
+                            getRow: () => 36 }, value: 'TRUE' });
+t(panel._cells['36,1'] === false, 'onEdit でも効く');
+F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 1,
+                            getRow: () => 9 }, value: 'TRUE' });
+t(true, '引っ越し前の行を触っても、何も起きない（例外にならない）');
+
+console.log('\n■ もう置いてあるときは、並べ直さない');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+// 見た目を自分で整えたことにする
+panel._cells['9,2'] = '🔄 コードを更新する（じぶんで書き換えた）';
+panel._cells['8,2'] = '▼ チェックを入れると動きます（じぶんで書き換えた）';
+F('menuMakePanel')();
+t(panel._cells['9,2'] === '🔄 コードを更新する（じぶんで書き換えた）',
+  'ラベルを書き換えない');
+t(panel._cells['8,2'] === '▼ チェックを入れると動きます（じぶんで書き換えた）',
+  '見出しも書き換えない');
+has(alerts[alerts.length - 1].t, 'もう置いてあります', 'そう伝える');
+has(alerts[alerts.length - 1].b, '並びはそのまま', '触っていないと伝える');
+t(triggers.filter(x => x.getHandlerFunction() === 'panelWatch').length === 1,
+  '見張りは入れ直す');
+
+console.log('\n■ 見出しを消してしまったら、置き直せる');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+Object.keys(panel._cells).forEach(k => { if (/^\d+,/.test(k)) delete panel._cells[k]; });
+delete props['PANEL_ROW'];
+t(F('panelHeadRow_')(panel) === 0, '見出しが無ければ 0');
+t(F('panelTop_')(panel) === 0, 'ボタンの位置も 0');
+F('panelWatch')();
+t(true, '置いていない状態で見張りが回っても落ちない');
+F('menuMakePanel')();
+t(F('panelHeadRow_')(panel) === 8, 'もう一度8行目に置ける');
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

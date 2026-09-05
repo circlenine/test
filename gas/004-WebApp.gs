@@ -2,11 +2,14 @@
  * ================================================================
  *  みんなの記録ページ（004-WebApp.gs）
  *
- *  ★★★  W003ver  （2026/09/06）  ★★★
+ *  ★★★  W004ver  （2026/09/06）  ★★★
  *
  *  ファイル記号: C=001-Code.gs / E=002-Extras.gs / L=003-LineReport.gs / W=004-WebApp.gs
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *
+ *  [W004ver] URLの画面で「本当に開けるか」を実際に叩いて確かめるようにした
+ *   ・公開中のURLをログインなしで取りにいき、うちのページが返るか見る
+ *   ・返らないときは、理由（doGetが無い／ログインを求められる／デプロイが無い）と直し方を出す
  *  [W003ver] URLの出し方を直した
  *   ・リンクとして押せる／コピーボタンつきの画面にした（前は文字だけで触れなかった）
  *   ・「このURLをグループLINEに送る」ボタンを付けた。トーク上ではリンクになる
@@ -23,7 +26,7 @@
  * ================================================================
  */
 
-const WB_VERSION = "W003ver";
+const WB_VERSION = "W004ver";
 
 /** 何日ぶんを持っていくか。古い記録まで全部見たいときは URL に ?all=1 を付ける */
 const WB_DAYS = 190;
@@ -217,6 +220,72 @@ function wbEsc_(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
                   .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+
+/**
+ * 公開されているURLを、実際に開いてみて確かめる。
+ * 推測で原因を当てにいくより、1回叩いたほうが早い。
+ *
+ * ここからの取得はログインしていない状態なので、
+ * 「アクセスできるユーザー：全員」でなければ、みんなと同じように弾かれる。
+ * つまり、メンバーが見る状態をそのまま再現できる。
+ */
+function wbSelfTest_() {
+  const url = wbUrl_();
+  if (!url) {
+    return { ok: false, url: "",
+      title: "まだ公開されていません",
+      how: "「デプロイ」→「新しいデプロイ」→ 種類：ウェブアプリ で公開してください。" };
+  }
+
+  let code = 0, body = "";
+  try {
+    const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
+    code = res.getResponseCode();
+    body = String(res.getContentText() || "").slice(0, 4000);
+  } catch (e) {
+    return { ok: false, url: url,
+      title: "URLを開けませんでした",
+      how: (e && e.message) || String(e) };
+  }
+
+  if (body.indexOf("wbapp-ok") !== -1) {
+    return { ok: true, url: url,
+      title: "ページはちゃんと開けます（" + WB_VERSION + "）",
+      how: "スマホで開けないなら、ブラウザに残っている古い中身が原因かもしれません。" +
+           "画面を引き下げて読み込み直すか、別のブラウザで試してください。" };
+  }
+
+  // 目印が無い ＝ うちのページが返っていない。中身から理由を見分ける
+  let title = "うちのページが返ってきていません（" + code + "）";
+  let how = "";
+
+  if (body.indexOf("doGet") !== -1 ||
+      body.indexOf("スクリプト関数が見つかりません") !== -1 ||
+      body.indexOf("Script function not found") !== -1) {
+    how = "公開されているバージョンに doGet がありません。\n" +
+          "004-WebApp を貼る前にデプロイした状態です。\n" +
+          "→「デプロイ」→「デプロイを管理」→ 鉛筆 → バージョン「新バージョン」→ デプロイ";
+  } else if (code === 401 || code === 403 ||
+             body.indexOf("accounts.google.com") !== -1 ||
+             body.indexOf("ServiceLogin") !== -1) {
+    title = "ログインを求められています（" + code + "）";
+    how = "「アクセスできるユーザー」が「全員」になっていません。\n" +
+          "→「デプロイを管理」→ 鉛筆 → アクセスできるユーザー：全員 → デプロイ";
+  } else if (code === 404 ||
+             body.indexOf("ファイルを開くことができません") !== -1 ||
+             body.indexOf("Sorry, unable to open the file") !== -1) {
+    how = "そのURLのデプロイが見つかりません。消したか、URLが古いかです。\n" +
+          "→「デプロイ」→「新しいデプロイ」で作り直し、出てきた新しいURLを使ってください。\n" +
+          "　この画面の上に出ているURLが、いま正しいURLです。";
+  } else {
+    how = "原因を絞りきれませんでした。\n" +
+          "→ まず「デプロイを管理」→ 鉛筆 → バージョン「新バージョン」→ デプロイ を試してください。";
+  }
+  return { ok: false, url: url, title: title, how: how, peek: body.slice(0, 200) };
+}
+
+/** 画面から呼ぶ用 */
+function wbSelfTest() { return JSON.stringify(wbSelfTest_()); }
 
 /**
  * ページのURLをグループLINEに送る。
@@ -530,6 +599,7 @@ nav button.on{color:var(--blue)}
   border-radius:11px;padding:13px;font-size:15px;font-weight:800}
 .gate .ng{color:#fca5a5;font-size:12px;margin-top:11px;min-height:18px}
 </style></head><body>
+<!--wbapp-ok-->
 
 <header>
   <div class="hrow">

@@ -209,6 +209,72 @@ function wbEsc_(s) {
 }
 
 /**
+ * 公開されているURLを、実際に開いてみて確かめる。
+ * 推測で原因を当てにいくより、1回叩いたほうが早い。
+ *
+ * ここからの取得はログインしていない状態なので、
+ * 「アクセスできるユーザー：全員」でなければ、みんなと同じように弾かれる。
+ * つまり、メンバーが見る状態をそのまま再現できる。
+ */
+function wbSelfTest_() {
+  const url = wbUrl_();
+  if (!url) {
+    return { ok: false, url: "",
+      title: "まだ公開されていません",
+      how: "「デプロイ」→「新しいデプロイ」→ 種類：ウェブアプリ で公開してください。" };
+  }
+
+  let code = 0, body = "";
+  try {
+    const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
+    code = res.getResponseCode();
+    body = String(res.getContentText() || "").slice(0, 4000);
+  } catch (e) {
+    return { ok: false, url: url,
+      title: "URLを開けませんでした",
+      how: (e && e.message) || String(e) };
+  }
+
+  if (body.indexOf("wbapp-ok") !== -1) {
+    return { ok: true, url: url,
+      title: "ページはちゃんと開けます（" + WB_VERSION + "）",
+      how: "スマホで開けないなら、ブラウザに残っている古い中身が原因かもしれません。" +
+           "画面を引き下げて読み込み直すか、別のブラウザで試してください。" };
+  }
+
+  // 目印が無い ＝ うちのページが返っていない。中身から理由を見分ける
+  let title = "うちのページが返ってきていません（" + code + "）";
+  let how = "";
+
+  if (body.indexOf("doGet") !== -1 ||
+      body.indexOf("スクリプト関数が見つかりません") !== -1 ||
+      body.indexOf("Script function not found") !== -1) {
+    how = "公開されているバージョンに doGet がありません。\n" +
+          "004-WebApp を貼る前にデプロイした状態です。\n" +
+          "→「デプロイ」→「デプロイを管理」→ 鉛筆 → バージョン「新バージョン」→ デプロイ";
+  } else if (code === 401 || code === 403 ||
+             body.indexOf("accounts.google.com") !== -1 ||
+             body.indexOf("ServiceLogin") !== -1) {
+    title = "ログインを求められています（" + code + "）";
+    how = "「アクセスできるユーザー」が「全員」になっていません。\n" +
+          "→「デプロイを管理」→ 鉛筆 → アクセスできるユーザー：全員 → デプロイ";
+  } else if (code === 404 ||
+             body.indexOf("ファイルを開くことができません") !== -1 ||
+             body.indexOf("Sorry, unable to open the file") !== -1) {
+    how = "そのURLのデプロイが見つかりません。消したか、URLが古いかです。\n" +
+          "→「デプロイ」→「新しいデプロイ」で作り直し、出てきた新しいURLを使ってください。\n" +
+          "　この画面の上に出ているURLが、いま正しいURLです。";
+  } else {
+    how = "原因を絞りきれませんでした。\n" +
+          "→ まず「デプロイを管理」→ 鉛筆 → バージョン「新バージョン」→ デプロイ を試してください。";
+  }
+  return { ok: false, url: url, title: title, how: how, peek: body.slice(0, 200) };
+}
+
+/** 画面から呼ぶ用 */
+function wbSelfTest() { return JSON.stringify(wbSelfTest_()); }
+
+/**
  * ページのURLをグループLINEに送る。
  * LINEのトーク上ではリンクになるので、みんなタップするだけで開ける。
  */

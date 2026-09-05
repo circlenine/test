@@ -435,5 +435,48 @@ setCfg([]);                                  has(F('wbLockText_')(), '鍵なし'
 setCfg([['ページの合言葉', 'x']]);            has(F('wbLockText_')(), '合言葉あり', '合言葉あり');
 setCfg([['ページを見られるメール', 'a@b.c']]); has(F('wbLockText_')(), 'デプロイ設定', 'メール制限だけだと注意が出る');
 
+console.log('\n■ 公開URLを実際に叩いて確かめる');
+{
+  let reply = { code: 200, body: '' };
+  ctx.UrlFetchApp = { fetch: () => ({
+    getResponseCode: () => reply.code, getContentText: () => reply.body }) };
+  ctx.ScriptApp = { getProjectTriggers: () => [],
+    getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/ABC/exec' }) };
+  setCfg([]);
+  const T = () => F('wbSelfTest_')();
+
+  reply = { code: 200, body: '<body>\n<!--wbapp-ok-->\n<header>' };
+  ok(T().ok === true, '目印が返ってくれば OK');
+  has(T().title, 'W0', 'いま公開されている版が出る');
+
+  reply = { code: 200, body: 'スクリプト関数が見つかりません: doGet' };
+  ok(T().ok === false, 'doGet が無ければ NG');
+  has(T().how, '新バージョン', 'デプロイし直せ、と出る');
+
+  reply = { code: 200, body: '<html>...accounts.google.com/ServiceLogin?...' };
+  has(T().title, 'ログインを求められています', 'ログイン画面ならそう言う');
+  has(T().how, '全員', 'アクセス範囲を直せ、と出る');
+
+  reply = { code: 404, body: '現在、ファイルを開くことができません。' };
+  has(T().how, '新しいデプロイ', 'デプロイが無ければ作り直せ、と出る');
+
+  reply = { code: 500, body: 'なにか知らないもの' };
+  ok(T().ok === false, '分からないときも ok=false');
+  has(T().how, '新バージョン', 'まずデプロイし直せ、と勧める');
+
+  ok(JSON.parse(F('wbSelfTest')()).ok === false, '画面から呼ぶ形でも動く');
+
+  ctx.ScriptApp = { getProjectTriggers: () => [], getService: () => ({ getUrl: () => '' }) };
+  has(T().title, 'まだ公開されていません', '未公開ならそう言う');
+
+  ctx.ScriptApp = { getProjectTriggers: () => [],
+    getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/ABC/exec' }) };
+  ctx.UrlFetchApp = { fetch: () => { throw new Error('つながりません'); } };
+  has(T().title, 'URLを開けませんでした', '取得そのものが失敗しても落ちない');
+}
+
+console.log('\n■ ページに目印が入っている');
+ok(K('WB_HTML').indexOf('wbapp-ok') !== -1, 'ページ側に目印がある');
+
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

@@ -821,5 +821,76 @@ t(panel._cells['36,1'] === false, 'A列のチェックが外れる');
 has(panel._cells[F('panelResultRow_')(panel) + ',2'],
     '✅', '結果はチェックのすぐ右の列（B）に出る');
 
+/* ============ 実際のスプシで起きた並びの崩れ ============ */
+console.log('\n■ 並び順ではなく、書いてある文言で動く');
+// 実際にこうなっていた：38行目と40行目、39行目と41行目が同じ文言
+function realLayout() {
+  reset([['001-Code.gs', 'あたらしい']]);
+  panel._cells['34,2'] = '💡 まーく用 コード修正開始チェックボタン';
+  panel._cells['35,2'] = '▼ チェックを入れると動きます（終わると自動で外れます）';
+  const labels = ['🔄 コードを更新する', '🔧 更新できる状態か調べる',
+                  '🧹 全タブをまとめて整形する', '⏪ 前のコードに戻す',
+                  '🧹 全タブをまとめて整形する', '⏪ 前のコードに戻す'];
+  for (let i = 0; i < 6; i++) {
+    panel._cells[(36 + i) + ',2'] = false;      // B列＝チェック
+    panel._cells[(36 + i) + ',3'] = labels[i];  // C列＝ラベル
+  }
+  panel._cells['43,2'] = '結果';                 // 結果はB列へ動かしてある
+  panel._cells['44,2'] = '（まだ何も動かしていません）';
+}
+
+realLayout();
+t(F('panelHeadRow_')(panel) === 35, '見出しは35行目');
+t(F('panelChkCol_')(panel, 36) === 2, 'チェックはB列');
+t(F('panelItemOf_')('🧹 全タブをまとめて整形する').fn === 'menuFormatAll',
+  '文言から正しい機能を引ける');
+t(F('panelItemOf_')('🔄 コードを更新する').fn === 'menuUpdateCode', '1つめも引ける');
+t(F('panelItemOf_')('なにこれ') === null, '知らない文言は null');
+
+console.log('\n■ 「全タブをまとめて整形する」を押したら、本当に整形が動く');
+vm.runInContext('var formatRan = 0; function menuFormatAll(){ formatRan++; }', ctx);
+panel._cells['38,2'] = true;                     // 3行目＝全タブをまとめて整形する
+F('panelWatch')();
+t(vm.runInContext('formatRan', ctx) === 1, '整形が動いた');
+t(lastPut() === undefined, 'コードの更新は動いていない（前は別のものが動いていた）');
+t(panel._cells['38,2'] === false, 'チェックも外れる');
+
+console.log('\n■ 結果はB列（動かした先）に出る');
+has(panel._cells['44,2'], '✅', '結果らんの位置に出る');
+has(panel._cells['44,2'], '全タブをまとめて整形', 'どれを動かしたか出る');
+t(panel._cells['44,3'] === undefined, 'C列には書かない');
+
+console.log('\n■ 重複していたら、直し方を知らせる（勝手に並べ替えない）');
+realLayout();
+const snap = JSON.stringify(Object.keys(panel._cells)
+  .filter(k => /^\d+,\d+$/.test(k)).sort().map(k => k + '=' + panel._cells[k]));
+F('menuMakePanel')();
+t(JSON.stringify(Object.keys(panel._cells)
+  .filter(k => /^\d+,\d+$/.test(k)).sort().map(k => k + '=' + panel._cells[k])) === snap,
+  'セルを一切さわらない');
+has(alerts[alerts.length - 1].t, '並びを直してください', 'そう伝える');
+has(alerts[alerts.length - 1].b, '40行目', '重複している行を教える');
+has(alerts[alerts.length - 1].b, 'ページのURLをLINEに送る', '足りないものを教える');
+has(alerts[alerts.length - 1].b, '書き換えてください', '直し方も教える');
+
+console.log('\n■ 文言を直したら、そのまま使える');
+panel._cells['40,3'] = '💬 ページのURLをLINEに送る';
+panel._cells['41,3'] = '🩺 ページが開けるか調べる';
+const st = F('panelCheck_')(panel);
+t(st.dup.length === 0, '重複が消えた');
+t(st.missing.length === 0, '足りないものも無い');
+F('menuMakePanel')();
+has(alerts[alerts.length - 1].t, 'もう置いてあります', '普通に通る');
+has(alerts[alerts.length - 1].b, 'そろっています', 'そう伝える');
+
+console.log('\n■ 分からない文言の行を押したとき');
+realLayout();
+panel._cells['39,3'] = 'なにか勝手に書いた文';
+panel._cells['39,2'] = true;
+F('panelWatch')();
+t(panel._cells['39,2'] === false, 'チェックは外れる');
+has(panel._cells['44,2'], '何をするボタンか分かりません', 'そう出る');
+has(panel._cells['44,2'], 'コードを更新する', '正しい文言の一覧を出す');
+
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

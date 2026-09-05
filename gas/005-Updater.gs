@@ -556,17 +556,17 @@ const PANEL_SCAN      = 300;  // 見出しをどこまで探すか（行）
  */
 function panelItems_() {
   return [
-    { label: "🔄 コードを更新する",            fn: "menuUpdateCode",
+    { key: "コードを更新",       label: "🔄 コードを更新する",         fn: "menuUpdateCode",
       note: "GitHubの新しいコードを取り込み、デプロイもやり直します" },
-    { label: "🔧 更新できる状態か調べる",      fn: "menuUpdateStatus",
+    { key: "更新できる状態",     label: "🔧 更新できる状態か調べる",   fn: "menuUpdateStatus",
       note: "APIが使えるか、どこから読むかを見ます" },
-    { label: "💬 ページのURLをLINEに送る",     fn: "menuWebAppSendLine",
+    { key: "URLをLINE",          label: "💬 ページのURLをLINEに送る",  fn: "menuWebAppSendLine",
       note: "グループLINEにリンクを送ります" },
-    { label: "🩺 ページが開けるか調べる",      fn: "menuWebAppCheck",
+    { key: "開けるか調べる",     label: "🩺 ページが開けるか調べる",   fn: "menuWebAppCheck",
       note: "みんなの記録ページが本当に開けるか、実際に試します" },
-    { label: "🧹 全タブをまとめて整形する",    fn: "menuFormatAll",
+    { key: "全タブをまとめて整形", label: "🧹 全タブをまとめて整形する", fn: "menuFormatAll",
       note: "並び順・色・行の高さを整えます" },
-    { label: "⏪ 前のコードに戻す",            fn: "menuRestoreCode",
+    { key: "前のコードに戻す",   label: "⏪ 前のコードに戻す",         fn: "menuRestoreCode",
       note: "更新で壊れたとき用。直前の状態に戻します" }
   ];
 }
@@ -585,6 +585,57 @@ const PANEL_FROM = {
 function panelHas_(name) {
   try { return eval("typeof " + name) === "function"; }
   catch (e) { return false; }
+}
+
+/**
+ * その文言が、どのボタンのことかを見分ける。
+ *
+ * 行の順番で決めない。順番で決めると、途中に足したり並べ替えたりしたときに
+ * 「書いてある名前」と「動くもの」がずれてしまう。実際にそれで
+ * 「全タブをまとめて整形する」を押すと別のものが動く状態になっていた。
+ * 書いてある文言で決めれば、並べ替えても足しても、見たとおりに動く。
+ */
+function panelItemOf_(text) {
+  const t = String(text == null ? "" : text).replace(/[\s\u3000]/g, "");
+  if (!t) return null;
+  const items = panelItems_();
+  for (let i = 0; i < items.length; i++) {
+    if (t.indexOf(items[i].key.replace(/[\s\u3000]/g, "")) !== -1) return items[i];
+  }
+  return null;
+}
+
+/**
+ * 置いてあるボタンを、上から順に読む。
+ * 戻り値は [{ row, text, item }]。item が null なら、どれのことか分からない行。
+ */
+function panelReadRows_(sh) {
+  const top = panelTop_(sh);
+  if (!top) return [];
+  const chk = panelChkCol_(sh, top);
+  const room = Math.min(panelItems_().length + 8, sh.getMaxRows() - top + 1);
+  if (room <= 0) return [];
+
+  const grid = sh.getRange(top, chk, room, 2).getValues();
+  const out = [];
+  for (let i = 0; i < grid.length; i++) {
+    if (grid[i][0] !== true && grid[i][0] !== false) break;   // チェックが無い行で終わり
+    out.push({ row: top + i, text: String(grid[i][1]), item: panelItemOf_(grid[i][1]) });
+  }
+  return out;
+}
+
+/** 並びを確かめる。足りないもの・重複・読めない行を返す */
+function panelCheck_(sh) {
+  const rows = panelReadRows_(sh);
+  const seen = {}, dup = [], unknown = [];
+  rows.forEach(function (r) {
+    if (!r.item) { unknown.push(r); return; }
+    if (seen[r.item.key]) dup.push(r);
+    else seen[r.item.key] = r.row;
+  });
+  const missing = panelItems_().filter(function (x) { return !seen[x.key]; });
+  return { rows: rows, missing: missing, dup: dup, unknown: unknown, seen: seen };
 }
 
 /** ボタンが占める行数（見出し・空き行・結果らんを含む） */
@@ -668,10 +719,36 @@ function panelTop_(sh) {
   return h ? h + 1 : 0;
 }
 
-/** 結果を書く行。まだ置いていなければ 0 */
+/**
+ * 結果を書くセル。まだ置いていなければ null。
+ *
+ * 「結果」と書いてある行を、ボタンの下から探す。
+ * 見つかれば、そのすぐ下の同じ列に書く。列を動かしていても付いていける。
+ */
+function panelResultCell_(sh) {
+  const top = panelTop_(sh);
+  if (!top) return null;
+  const rows = panelReadRows_(sh);
+  const from = top + (rows.length || panelItems_().length);
+  const room = Math.min(8, sh.getMaxRows() - from + 1);
+  if (room > 0) {
+    const grid = sh.getRange(from, 1, room, 6).getValues();
+    for (let i = 0; i < grid.length; i++) {
+      for (let c = 0; c < 6; c++) {
+        if (String(grid[i][c]).trim() === "結果") {
+          return { row: from + i + 1, col: c + 1 };
+        }
+      }
+    }
+  }
+  // 見つからなければ、置いたときの並びで数える
+  return { row: top + panelItems_().length + 2, col: panelChkCol_(sh, top) + 1 };
+}
+
+/** 結果を書く行（テストや案内で使う） */
 function panelResultRow_(sh) {
-  const t = panelTop_(sh);
-  return t ? t + panelItems_().length + 2 : 0;
+  const c = panelResultCell_(sh);
+  return c ? c.row : 0;
 }
 
 /**
@@ -696,15 +773,49 @@ function menuMakePanel() {
   // 見やすいように動かしたり、セルを結合したりしているかもしれないので、
   // こちらから書き換えると、その工夫を壊してしまう。
   if (already) {
-    // 足りないボタンがあれば足す。すでにあるぶんは書き換えない
-    const added = panelSync_(sh, already);
+    const chk = panelCheck_(sh);
     const locked = panelProtect_(sh);
     panelInstall_();
+
+    // 直すところがあれば、こちらで書き換えず、どこを直せばよいかを伝える。
+    // 見た目を整えてもらっているので、勝手に並べ直すほうが困る。
+    if (chk.dup.length || chk.unknown.length) {
+      const L = [];
+      L.push("ボタン：" + (already + 1) + "行目から" + chk.rows.length + "行");
+      L.push("");
+      if (chk.dup.length) {
+        L.push("同じものが2つあります");
+        chk.dup.forEach(function (r) {
+          L.push("　" + r.row + "行目：" + r.item.label +
+                 "（" + chk.seen[r.item.key] + "行目にもあります）");
+        });
+        L.push("");
+      }
+      if (chk.unknown.length) {
+        L.push("どのボタンか分からない行");
+        chk.unknown.forEach(function (r) {
+          L.push("　" + r.row + "行目：" + r.text.slice(0, 24));
+        });
+        L.push("");
+      }
+      if (chk.missing.length) {
+        L.push("足りないもの（" + chk.missing.length + "個）");
+        chk.missing.forEach(function (x) { L.push("　" + x.label); });
+        L.push("");
+        L.push("上の行の文言を、この「足りないもの」に書き換えてください。");
+        L.push("チェックは書いてある文言を見て動くので、それだけで直ります。");
+      } else {
+        L.push("いらない行は、行ごと消してください。");
+      }
+      return updTell_("⚠️ ボタンの並びを直してください", L.join("\n"));
+    }
+
+    const added = panelSync_(sh, already);
     return updTell_("🧰 ボタンはもう置いてあります（" + already + "行目）",
-      "ボタン：" + (already + 1) + "行目から" + items.length + "個\n" +
+      "ボタン：" + (already + 1) + "行目から" + panelReadRows_(sh).length + "個\n" +
       "結果らん：" + panelResultRow_(sh) + "行目\n\n" +
       (added ? "足りなかった " + added + "個のボタンを足しました。\n"
-             : "並びはそのままにしました。\n") +
+             : "そろっています。並びはそのままにしました。\n") +
       "見やすいように動かしたり結合したりしていても、そのまま使えます。\n" +
       "見張りのしくみを入れ直しました。\n\n" +
       (locked ? "🔒 チェックのらんは、あなただけが触れるようにしてあります。"
@@ -774,25 +885,18 @@ function panelSync_(sh, headRow) {
   const label = chk + 1;
   const note  = chk + 2;
 
-  // いま何個ぶん置いてあるか。チェックの列が true/false の行を数える
-  let have = 0;
-  const room = Math.min(items.length + 6, sh.getMaxRows() - top + 1);
-  if (room > 0) {
-    const col = sh.getRange(top, chk, room, 1).getValues();
-    for (let i = 0; i < col.length; i++) {
-      if (col[i][0] === true || col[i][0] === false) have++;
-      else break;
-    }
-  }
-  if (have >= items.length) return 0;
+  const st = panelCheck_(sh);
+  const have = st.rows.length;
+  const miss = st.missing;
+  if (!have || !miss.length) return 0;
 
-  const add = items.length - have;
+  const add = miss.length;
   // 最後のボタンのすぐ下に足す。こうすると、上の行の書式を引き継いでくれる
   sh.insertRowsAfter(top + have - 1, add);
 
-  for (let i = have; i < items.length; i++) {
-    sh.getRange(top + i, label).setValue(items[i].label);
-    sh.getRange(top + i, note).setValue(items[i].note);
+  for (let i = 0; i < miss.length; i++) {
+    sh.getRange(top + have + i, label).setValue(miss[i].label);
+    sh.getRange(top + have + i, note).setValue(miss[i].note);
   }
   sh.getRange(top + have, chk, add, 1).insertCheckboxes()
     .setFontSize(PANEL_CHK_SIZE)
@@ -888,7 +992,8 @@ function panelOnEdit(e) {
     if (!top) return;
     if (e.range.getColumn() !== panelChkCol_(sh, top)) return;
     const row = e.range.getRow();
-    if (row < top || row >= top + panelItems_().length) return;
+    const rows = panelReadRows_(sh);
+    if (!rows.length || row < top || row > rows[rows.length - 1].row) return;
     panelRun_(row);
   } catch (err) { logErr_("panelOnEdit", err); }
 }
@@ -898,11 +1003,12 @@ function panelWatch() {
   try {
     const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(PANEL_TAB);
     if (!sh) return;
-    const n = panelItems_().length;
+    const rows = panelReadRows_(sh);
+    if (!rows.length) return;
     const top = panelTop_(sh);
-    if (!n || !top) return;
-    const vals = sh.getRange(top, panelChkCol_(sh, top), n, 1).getValues();
-    for (let i = 0; i < n; i++) {
+    const chk = panelChkCol_(sh, top);
+    const vals = sh.getRange(top, chk, rows.length, 1).getValues();
+    for (let i = 0; i < rows.length; i++) {
       if (vals[i][0] === true) { panelRun_(top + i); return; }   // 1回に1つだけ
     }
   } catch (err) { logErr_("panelWatch", err); }
@@ -917,11 +1023,13 @@ function panelRun_(row) {
   const sh = ss.getSheetByName(PANEL_TAB);
   if (!sh) return;
 
-  const items = panelItems_();
   const top = panelTop_(sh);
-  const idx = top ? row - top : -1;
-  if (idx < 0 || idx >= items.length) return;
-  const item = items[idx];
+  if (!top || row < top) return;
+
+  const chk = panelChkCol_(sh, top);
+  // その行に書いてある文言から、どのボタンかを決める
+  const text = sh.getRange(row, chk + 1).getValue();
+  const item = panelItemOf_(text);
 
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) return;      // だれかが動かしている最中
@@ -929,7 +1037,15 @@ function panelRun_(row) {
   try {
     // 先にチェックを外す。ここで外しておかないと、
     // 見張りが同じものをもう一度動かしてしまう
-    sh.getRange(row, panelChkCol_(sh, top)).setValue(false);
+    sh.getRange(row, chk).setValue(false);
+
+    if (!item) {
+      panelSay_(sh, "⚠️ この行が何をするボタンか分かりません：「" +
+        String(text).slice(0, 30) + "」\n" +
+        "文言を、下のどれかに書き換えてください：\n" +
+        panelItems_().map(function (x) { return "　" + x.label; }).join("\n"));
+      return;
+    }
 
     if (!panelHas_(item.fn)) {
       panelSay_(sh, "⚠️ " + item.label + " はまだ使えません（" +
@@ -957,11 +1073,10 @@ function panelRun_(row) {
 function panelSay_(sh, text) {
   if (!sh) return;
   try {
-    const rr = panelResultRow_(sh);
-    const top = panelTop_(sh);
-    if (!rr || !top) return;
+    const cell = panelResultCell_(sh);
+    if (!cell) return;
     const now = new Date();
-    sh.getRange(rr, panelLabelCol_(sh, top)).setValue(
+    sh.getRange(cell.row, cell.col).setValue(
       pad2_(now.getHours()) + ":" + pad2_(now.getMinutes()) + "  " + text);
     SpreadsheetApp.flush();
   } catch (e) {}

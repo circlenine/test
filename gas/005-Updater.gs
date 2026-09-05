@@ -593,11 +593,54 @@ function menuMakePanel() {
   sh.setColumnWidth(1, 46).setColumnWidth(2, 260).setColumnWidth(3, 300);
   sh.setFrozenRows(1);
 
+  const locked = panelProtect_(sh);
   panelInstall_();
+
   updTell_("🧰 そうさタブを作りました",
     "スマホのスプレッドシートアプリからは、このタブのチェックで動かせます。\n" +
     "（アプリではメニューが出ないため）\n\n" +
-    "チェックを入れると動き、終わると自動でチェックが外れて、下に結果が出ます。");
+    "チェックを入れると動き、終わると自動でチェックが外れて、下に結果が出ます。\n\n" +
+    (locked
+      ? "🔒 このタブは、あなただけが触れるように保護しました。\n" +
+        "　　ほかの編集者は見えますが、チェックは入れられません。\n" +
+        "　　誰かに使わせたいときは、Googleスプレッドシートの\n" +
+        "　　「データ → シートと範囲を保護」から、その人を足してください。"
+      : "⚠️ 保護をかけられませんでした。\n" +
+        "　　このままだと、編集できる人なら誰でもチェックを押せます。\n" +
+        "　　「データ → シートと範囲を保護」で手動でかけてください。"));
+}
+
+/**
+ * 「そうさ」タブを、自分だけが触れるようにする。
+ *
+ * ここのチェックは、コードの更新や巻き戻しを走らせるスイッチなので、
+ * 編集できる人なら誰でも押せる状態にしておきたくない。
+ * スクリプト自身は所有者として動くので、保護があっても書き込める。
+ */
+function panelProtect_(sh) {
+  try {
+    // 前にかけた保護が残っていたら、いったん外す
+    sh.getProtections(SpreadsheetApp.ProtectionType.SHEET).forEach(function (p) {
+      try { if (p.canEdit()) p.remove(); } catch (e) {}
+    });
+    const p = sh.protect().setDescription("そうさタブ（作った人だけが押せます）");
+    // 自分以外の編集者を外す。所有者は外せないので、結果として自分だけになる
+    const others = p.getEditors();
+    if (others && others.length) p.removeEditors(others);
+    if (p.canDomainEdit()) p.setDomainEdit(false);
+    return true;
+  } catch (e) {
+    logErr_("panelProtect", e);
+    return false;
+  }
+}
+
+/** いま保護がかかっているかを見る */
+function panelIsProtected_(sh) {
+  try {
+    const ps = sh.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+    return ps.length > 0;
+  } catch (e) { return false; }
 }
 
 /** チェックを見張るしくみを入れる（すでにあれば入れ直す） */

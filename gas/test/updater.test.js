@@ -51,6 +51,7 @@ const toasts = [], alerts = [], cells = {};
 let uiWorks = true;
 ctx.SpreadsheetApp = {
   flush: () => {},
+  ProtectionType: { SHEET: 'SHEET' },
   newDataValidation: () => ({ requireCheckbox: () => ({ build: () => ({}) }) }),
   getActiveSpreadsheet: () => ({
     toast: (m, t) => toasts.push({ t: t, m: m }),
@@ -97,8 +98,30 @@ const errs = [];
 let panel;
 function mkPanel() {
   const cells = {};
+  const prot = [];
+  let protFails = false;
   return {
     _cells: cells,
+    _prot: prot,
+    _failProtect: v => { protFails = v; },
+    getProtections: () => prot.slice(),
+    protect: () => {
+      if (protFails) throw new Error('保護できません');
+      const p = {
+        _editors: ['tomodachi@example.com', 'stranger@example.com'],
+        _domain: true, _removed: false,
+        setDescription() { return p; },
+        getEditors: () => p._editors.slice(),
+        removeEditors: list => { p._editors = p._editors.filter(e => list.indexOf(e) === -1); },
+        canDomainEdit: () => p._domain,
+        setDomainEdit: v => { p._domain = v; },
+        canEdit: () => true,
+        remove: () => { p._removed = true;
+                        const i = prot.indexOf(p); if (i >= 0) prot.splice(i, 1); }
+      };
+      prot.push(p);
+      return p;
+    },
     getName: () => 'そうさ',
     getMaxRows: () => 100,
     clear: () => {},
@@ -513,6 +536,33 @@ panel._cells[TOP + ',1'] = true;
 F('panelWatch')();
 t(panel._cells[TOP + ',1'] === false, 'チェックは外れる（押しっぱなしにならない）');
 has(panel._cells[resRow + ',2'], '✅', '処理自体は最後まで通る');
+
+console.log('\n■ そうさタブは自分だけが押せるようにする');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+t(panel._prot.length === 1, '保護がかかる');
+t(panel._prot[0]._editors.length === 0, 'ほかの編集者は外される（＝自分だけ）');
+t(panel._prot[0]._domain === false, '同じドメインの人もまとめて外す');
+has(alerts[alerts.length - 1].b, 'あなただけが触れるように', 'そう伝える');
+t(F('panelIsProtected_')(panel) === true, '保護されていると分かる');
+
+console.log('\n■ 作り直しても保護が二重にならない');
+F('menuMakePanel')();
+t(panel._prot.length === 1, '保護は1つのまま');
+
+console.log('\n■ 保護をかけられなかったときは、はっきり言う');
+reset([['001-Code.gs', 'あたらしい']]);
+panel = mkPanel();
+panel._failProtect(true);
+ctx.SpreadsheetApp.getActiveSpreadsheet = () => ({
+  toast: (m, t) => toasts.push({ t: t, m: m }),
+  getSheetByName: n => (n === 'そうさ' ? panel : null),
+  insertSheet: () => panel
+});
+F('menuMakePanel')();
+has(alerts[alerts.length - 1].b, '保護をかけられませんでした', '黙って済ませない');
+has(alerts[alerts.length - 1].b, '誰でもチェックを押せます', '何が起きるか書く');
+t(F('panelIsProtected_')(panel) === false, '保護なしと分かる');
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

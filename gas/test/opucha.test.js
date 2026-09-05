@@ -43,8 +43,8 @@ ctx.PropertiesService = { getScriptProperties: () => ({
   setProperty: (k, v) => { props[k] = v; }
 }) };
 vm.runInContext(fs.readFileSync(path.join(__dirname, 'gas-globals.js'), 'utf8'), ctx);
-vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'Opucha.gs'), 'utf8'), ctx);
-vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'Strategy.gs'), 'utf8'), ctx);
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'parts', 'Opucha.gs'), 'utf8'), ctx);
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'parts', 'Strategy.gs'), 'utf8'), ctx);
 const reset = () => vm.runInContext('_opuCache = null;', ctx);
 
 let fail = 0;

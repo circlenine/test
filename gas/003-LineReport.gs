@@ -2,11 +2,14 @@
  * ================================================================
  *  LINE画像（Flex Message）＋ まとめスプシ レポート作成
  *
- *  ★★★  L004ver  （2026/09/05）  ★★★
+ *  ★★★  L005ver  （2026/09/06）  ★★★
  *
- *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
+ *  ファイル記号: C=001-Code.gs / L=003-LineReport.gs / E=002-Extras.gs
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [L005ver]
+ *   ・ファイル名を 003-LineReport.gs にした（中身の動きは変えていない）
  *
  *  [L004ver]
  *   ・裏メッセージの文面を「設定」タブから変えられるようにした
@@ -34,7 +37,7 @@
  */
 
 /** このファイルのバージョン */
-const LR_VERSION = "L004ver";
+const LR_VERSION = "L005ver";
 
 
 /* ============ 鍵（コードに書かない） ============ */
@@ -148,7 +151,7 @@ function getGridRange(sheet, startRow, startColIndex, rowCount, colSpanArray) {
  *   → イベントのソース: スプレッドシートから
  *   → イベントの種類: 起動時
  *
- * 同じプロジェクトに Strategy.gs / Opucha.gs があれば、それも一緒に出す。
+ * 同じプロジェクトに 002-Extras があれば、それも一緒に出す。
  */
 function onOpenReport() {
   const m = SpreadsheetApp.getUi().createMenu("📊 レポート");
@@ -171,11 +174,11 @@ function onOpenReport() {
  */
 function menuShowVersions() {
   const rows = [];
-  rows.push("C（Code.gs）      : " +
+  rows.push("001-Code       : " +
     (typeof CODE_VERSION === "string" ? CODE_VERSION : "入っていません"));
-  rows.push("L（LineReport.gs）: " + LR_VERSION);
-  rows.push("E（Extras.gs）    : " +
+  rows.push("002-Extras     : " +
     (typeof EX_VERSION === "string" ? EX_VERSION : "入っていません"));
+  rows.push("003-LineReport : " + LR_VERSION);
 
   const msg = "いま動いているバージョン\n──────────────\n" + rows.join("\n");
   SpreadsheetApp.getUi().alert(msg);

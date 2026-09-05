@@ -6,7 +6,7 @@ const fs = require('fs'), path = require('path'), vm = require('vm');
 const ctx = { console };
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(__dirname, 'gas-globals.js'), 'utf8'), ctx);
-vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'MapLink.gs'), 'utf8'), ctx);
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'parts', 'MapLink.gs'), 'utf8'), ctx);
 
 let fail = 0;
 const eq = (a, b, msg) => {

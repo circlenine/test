@@ -44,7 +44,7 @@ const TABS = {
 };
 ctx.SpreadsheetApp = { getActiveSpreadsheet: () => ({ getSheetByName: n => TABS[n] ? sheet(TABS[n]) : null }) };
 vm.runInContext(fs.readFileSync(path.join(__dirname, 'gas-globals.js'), 'utf8'), ctx);
-vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'Strategy.gs'), 'utf8'), ctx);
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'parts', 'Strategy.gs'), 'utf8'), ctx);
 
 let fail = 0;
 const eq = (a, b, msg) => {

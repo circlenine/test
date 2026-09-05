@@ -6,7 +6,7 @@ const fs = require('fs'), path = require('path'), vm = require('vm');
 const ctx = { console };
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(__dirname, 'gas-globals.js'), 'utf8'), ctx);
-vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'ChartFit.gs'), 'utf8'), ctx);
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'parts', 'ChartFit.gs'), 'utf8'), ctx);
 const K = e => vm.runInContext(e, ctx);
 
 let fail = 0;

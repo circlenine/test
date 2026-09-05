@@ -130,7 +130,7 @@ ctx.UrlFetchApp = { fetch: (url, opt) => {
 }};
 
 /* ---- Code.gs を読み込む ---- */
-const src = fs.readFileSync(path.join(__dirname, '..', 'Code.gs'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', '001-Code.gs'), 'utf8');
 vm.runInContext(src, ctx, { filename: 'Code.gs' });
 
 /* ---- ここから検証 ---- */

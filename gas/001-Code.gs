@@ -1,12 +1,18 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C014ver  （2026/09/05）  ★★★   ← もとは version 232
+ *  ★★★  C015ver  （2026/09/06）  ★★★   ← もとは version 232
  *
- *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
- *  ※ Apps Script 上のファイル名も「Code」に統一してください（旧: コード）
+ *  ファイル記号: C=001-Code.gs / L=003-LineReport.gs / E=002-Extras.gs
+ *  ※ Apps Script 上のファイル名も「001-Code」にそろえてください
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C015ver]
+ *   ・GitHub 上のファイル名を 001-Code.gs / 002-Extras.gs / 003-LineReport.gs にした
+ *     貼る順番のとおりに並ぶので、どれをどこに貼るか迷わない
+ *     Apps Script 側のファイル名も同じにそろえる
+ *   ・中身の動きは C014ver から変えていない
  *
  *  [C014ver]
  *   ・日付メモとみなす条件に「矢印を付ける」か「リプライで送る」を必須にした
@@ -316,7 +322,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C014ver";
+const CODE_VERSION = "C015ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -1527,13 +1533,13 @@ function lineReply_(replyToken, text) {
 }
 
 /**
- * Geminiの鍵とモデル名は LineReport.gs 側にある。
+ * Geminiの鍵とモデル名は 003-LineReport.gs 側にある。
  * 同じプロジェクトに置いてあれば使えるが、無い場合にそなえて確かめてから呼ぶ。
  * （呼べないと ReferenceError になり、原因が分かりにくいため）
  */
 function geminiReady_() {
   if (typeof getGeminiKey_ !== "function" || typeof getGeminiModel_ !== "function") {
-    throw new Error("LineReport.gs が入っていません。同じプロジェクトに追加してください。");
+    throw new Error("003-LineReport.gs が入っていません。同じプロジェクトに追加してください。");
   }
   const k = getGeminiKey_();
   if (!k) throw new Error("Geminiのキーが未設定です（メニュー「🤖 Geminiキーを設定」）");

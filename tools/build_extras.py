@@ -7,9 +7,10 @@ Strategy.gs / Opucha.gs / ChartFit.gs を Extras.gs に束ねる。
 """
 import pathlib, re, sys
 
-VERSION = "E003ver"
+VERSION = "E004ver"
 DATE = "2026/09/02"
-CHANGELOG = """ *  [E003ver] 金額の区分（ショート・ロングの境目）を「設定」タブから変えられるようにした
+CHANGELOG = """ *  [E004ver] ファイル名を 002-Extras.gs にした（中身の動きは変えていない）
+ *  [E003ver] 金額の区分（ショート・ロングの境目）を「設定」タブから変えられるようにした
  *  [E002ver] ファイル記号を K → C に変更（Code.gs に合わせた）
  *
  *  [E001ver] 3つの追加機能をまとめた最初の版
@@ -27,7 +28,7 @@ head = f'''/**
  *
  *  ★★★  {VERSION}  （{DATE}）  ★★★
  *
- *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
+ *  ファイル記号: C=001-Code.gs / L=003-LineReport.gs / E=002-Extras.gs
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
  *
@@ -51,7 +52,7 @@ const EX_VERSION = "{VERSION}";
 
 parts = [head]
 for f, title in SRC:
-    t = (ROOT / "gas" / f).read_text()
+    t = (ROOT / "gas" / "parts" / f).read_text()
     parts.append(f"\n\n/* ##############################################################\n"
                  f"   {title}（元 {f}）\n"
                  f"   ############################################################## */\n\n{t}")
@@ -64,5 +65,5 @@ dup = sorted({n for n in flat if flat.count(n) > 1})
 if dup:
     sys.exit("重複した宣言があります: " + ", ".join(dup))
 
-(ROOT / "gas" / "Extras.gs").write_text(out)
+(ROOT / "gas" / "002-Extras.gs").write_text(out)
 print(f"Extras.gs を作成 ({VERSION}) : {len(out.splitlines())}行 / トップレベル宣言 {len(flat)}個 / 重複なし")

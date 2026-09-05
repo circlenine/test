@@ -544,7 +544,13 @@ const PANEL_HEAD      = "▼ チェックを入れると動きます（終わる
 const PANEL_MARK      = "チェックを入れると動きます";
 const PANEL_SCAN      = 300;  // 見出しをどこまで探すか（行）
 
-/** 上から順に並べるボタン。その機能を入れていなければ出さない */
+/**
+ * 上から順に並べるボタン。
+ *
+ * 入れていない機能も含めて、いつも同じ6つを並べる。
+ * ここで数が変わると、結果らんの行も保護する範囲もずれてしまうため。
+ * 押されたときに「まだ入っていません」と知らせるほうが、ずっと分かりやすい。
+ */
 function panelItems_() {
   return [
     { label: "🔄 コードを更新する",            fn: "menuUpdateCode",
@@ -559,8 +565,18 @@ function panelItems_() {
       note: "並び順・色・行の高さを整えます" },
     { label: "⏪ 前のコードに戻す",            fn: "menuRestoreCode",
       note: "更新で壊れたとき用。直前の状態に戻します" }
-  ].filter(function (x) { return panelHas_(x.fn); });
+  ];
 }
+
+/** その機能がどのファイルに入っているか（入っていないときの案内用） */
+const PANEL_FROM = {
+  menuUpdateCode:     "005-Updater",
+  menuUpdateStatus:   "005-Updater",
+  menuWebAppSendLine: "004-WebApp",
+  menuWebAppCheck:    "004-WebApp",
+  menuFormatAll:      "001-Code",
+  menuRestoreCode:    "005-Updater"
+};
 
 /** その関数がこのプロジェクトに入っているか */
 function panelHas_(name) {
@@ -584,12 +600,23 @@ function panelHeadRow_(sh) {
   const cached = parseInt(pr.getProperty("PANEL_ROW"), 10);
   if (cached > 0 && panelIsHead_(sh, cached)) return cached;
 
-  const last = Math.min(sh.getMaxRows(), PANEL_SCAN);
-  const col = sh.getRange(1, 2, last, 1).getValues();
-  for (let i = 0; i < col.length; i++) {
-    if (String(col[i][0]).indexOf(PANEL_MARK) !== -1) {
-      pr.setProperty("PANEL_ROW", String(i + 1));
-      return i + 1;
+  // シート全体から探す。上に行が増えても、何行増えても見つかる
+  try {
+    const hit = sh.createTextFinder(PANEL_MARK).matchEntireCell(false).findNext();
+    if (hit) {
+      const row = hit.getRow();
+      pr.setProperty("PANEL_ROW", String(row));
+      return row;
+    }
+  } catch (e) {
+    // 古い環境などで使えないときは、B列を順に見ていく
+    const last = Math.min(sh.getMaxRows(), PANEL_SCAN);
+    const col = sh.getRange(1, 2, last, 1).getValues();
+    for (let i = 0; i < col.length; i++) {
+      if (String(col[i][0]).indexOf(PANEL_MARK) !== -1) {
+        pr.setProperty("PANEL_ROW", String(i + 1));
+        return i + 1;
+      }
     }
   }
   pr.deleteProperty("PANEL_ROW");
@@ -638,12 +665,16 @@ function menuMakePanel() {
   // 見やすいように動かしたり、セルを結合したりしているかもしれないので、
   // こちらから書き換えると、その工夫を壊してしまう。
   if (already) {
+    // 足りないボタンがあれば足す。すでにあるぶんは書き換えない
+    const added = panelSync_(sh, already);
     const locked = panelProtect_(sh);
     panelInstall_();
     return updTell_("🧰 ボタンはもう置いてあります（" + already + "行目）",
       "ボタン：" + (already + 1) + "行目から" + items.length + "個\n" +
       "結果らん：" + panelResultRow_(sh) + "行目\n\n" +
-      "並びはそのままにしました（動かしたり結合したりしていても、そのまま使えます）。\n" +
+      (added ? "足りなかった " + added + "個のボタンを足しました。\n"
+             : "並びはそのままにしました。\n") +
+      "見やすいように動かしたり結合したりしていても、そのまま使えます。\n" +
       "見張りのしくみを入れ直しました。\n\n" +
       (locked ? "🔒 チェックのらんは、あなただけが触れるようにしてあります。"
               : "⚠️ 保護をかけられませんでした。編集できる人なら誰でも押せます。"));
@@ -710,6 +741,40 @@ function menuMakePanel() {
       ? "🔒 チェックのらんは、あなただけが触れるように保護しました。"
       : "⚠️ 保護をかけられませんでした。\n" +
         "　　このままだと、編集できる人なら誰でもチェックを押せます。"));
+}
+
+/**
+ * すでに置いてあるボタンが、いまの一覧より少なければ足す。
+ * すでにあるぶんの見た目（結合・書式・文言）は触らない。
+ * 戻り値は足した個数。
+ */
+function panelSync_(sh, headRow) {
+  const items = panelItems_();
+  const top = headRow + 1;
+
+  // いま何個ぶん置いてあるか。A列がチェックボックス（true/false）の行を数える
+  let have = 0;
+  const room = Math.min(items.length + 6, sh.getMaxRows() - top + 1);
+  if (room > 0) {
+    const col = sh.getRange(top, 1, room, 1).getValues();
+    for (let i = 0; i < col.length; i++) {
+      if (col[i][0] === true || col[i][0] === false) have++;
+      else break;
+    }
+  }
+  if (have >= items.length) return 0;
+
+  const add = items.length - have;
+  // 最後のボタンのすぐ下に足す。こうすると、上の行の書式を引き継いでくれる
+  sh.insertRowsAfter(top + have - 1, add);
+
+  for (let i = have; i < items.length; i++) {
+    const r = top + i;
+    sh.getRange(r, 2).setValue(items[i].label);
+    sh.getRange(r, 3).setValue(items[i].note);
+  }
+  sh.getRange(top + have, 1, add, 1).insertCheckboxes();
+  return add;
 }
 
 /** チェックのらん（A列のボタン部分だけ） */
@@ -840,6 +905,12 @@ function panelRun_(row) {
     // 先にチェックを外す。ここで外しておかないと、
     // 見張りが同じものをもう一度動かしてしまう
     if (sh) sh.getRange(row, 1).setValue(false);
+
+    if (!panelHas_(item.fn)) {
+      panelSay_(sh, "⚠️ " + item.label + " はまだ使えません（" +
+        (PANEL_FROM[item.fn] || "対応するファイル") + " を入れてください）");
+      return;
+    }
 
     panelSay_(sh, "⏳ " + item.label + " を実行中…");
     let out = "";

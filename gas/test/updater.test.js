@@ -105,8 +105,30 @@ function mkPanel() {
     getProtections: () => prot.slice(),
 
     getName: () => '説明',
-    getMaxRows: () => 100,
-    insertRowsAfter: () => {},
+    getMaxRows: () => 200,
+    // 行を足す＝その下の行がぜんぶ1つずつ下がる（本物と同じ動き）
+    insertRowsAfter: (after, n) => {
+      const moved = {};
+      Object.keys(cells).forEach(k => {
+        const m = k.match(/^(\d+),(\d+)$/);
+        if (!m) return;
+        const r = +m[1];
+        if (r > after) { moved[(r + n) + ',' + m[2]] = cells[k]; delete cells[k]; }
+      });
+      Object.keys(moved).forEach(k => { cells[k] = moved[k]; });
+    },
+    createTextFinder: q => ({
+      matchEntireCell: () => ({
+        findNext: () => {
+          for (let r = 1; r <= 200; r++) {
+            if (String(cells[r + ',2'] || '').indexOf(q) !== -1) {
+              return { getRow: () => r };
+            }
+          }
+          return null;
+        }
+      })
+    }),
     clear: () => { throw new Error('説明タブを clear してはいけません'); },
     setFrozenRows: () => {}, setRowHeight: () => {}, setRowHeights: () => {},
     setColumnWidth() { return this; },
@@ -140,6 +162,19 @@ function mkPanel() {
           };
           prot.push(p);
           return p;
+        },
+        // 本物と同じく、チェックボックスを付けると値が false になる
+        insertCheckboxes: () => {
+          for (let i = 0; i < (nr || 1); i++) {
+            for (let j = 0; j < (nc || 1); j++) cells[(r + i) + ',' + (c + j)] = false;
+          }
+          return px;
+        },
+        removeCheckboxes: () => {
+          for (let i = 0; i < (nr || 1); i++) {
+            for (let j = 0; j < (nc || 1); j++) delete cells[(r + i) + ',' + (c + j)];
+          }
+          return px;
         },
         setValue: v => { cells[r + ',' + c] = v; return px; },
         getValue: () => cells[r + ',' + c],
@@ -460,15 +495,12 @@ t(String(panel._cells['8,2']) === '▼ チェックを入れると動きます�
 let items = F('panelItems_')();
 // このテストでは 005-Updater しか読み込んでいないので、
 // 004-WebApp や 001-Code の機能は出てこないのが正しい
-t(items.length === 3, '入っている機能だけ並ぶ（' + items.length + '個）');
+t(items.length === 6, 'いつも6つ並ぶ（' + items.length + '個）');
 t(items[0].fn === 'menuUpdateCode', '1つめは「コードを更新する」');
-t(items.every(x => F('panelHas_')(x.fn)), '並んだものは全部呼べる');
-t(items.every(x => x.fn !== 'menuFormatAll'), '入れていない機能は出さない');
-vm.runInContext('function menuFormatAll(){}', ctx);   // あとから足したことにする
-items = F('panelItems_')();
-t(items.length === 4, '足せば並ぶ');
-t(items.some(x => x.fn === 'menuFormatAll'), '足したものが出る');
-vm.runInContext('menuFormatAll = undefined', ctx);
+t(items.some(x => x.fn === 'menuWebAppSendLine'),
+  '入れていない機能も並べる（数が変わると行がずれるため）');
+t(F('panelHas_')('menuUpdateCode') === true, '入っている機能は分かる');
+t(F('panelHas_')('menuWebAppSendLine') === false, '入っていない機能も分かる');
 t(F('panelHas_')('menuUpdateCode') === true, 'ある関数は true');
 t(F('panelHas_')('そんな関数はない') === false, '無い関数は false');
 
@@ -596,7 +628,7 @@ console.log('\n■ チェックのらんだけを自分だけが押せるよう�
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
 t(panel._prot.length === 1, '保護がかかる');
-t(panel._prot[0]._a1 === 'A9:A11', 'チェックのらんだけを守る（説明タブ全体ではない）');
+t(panel._prot[0]._a1 === 'A9:A14', 'チェックのらんだけを守る（説明タブ全体ではない）');
 t(panel._prot[0]._editors.length === 0, 'ほかの編集者は外される（＝自分だけ）');
 t(panel._prot[0]._domain === false, '同じドメインの人もまとめて外す');
 has(alerts[alerts.length - 1].b, 'あなただけが触れるように', 'そう伝える');
@@ -675,6 +707,67 @@ F('panelWatch')();
 t(true, '置いていない状態で見張りが回っても落ちない');
 F('menuMakePanel')();
 t(F('panelHeadRow_')(panel) === 8, 'もう一度8行目に置ける');
+
+console.log('\n■ 更新情報の行を足しても、追いかける');
+reset([['001-Code.gs', 'あたらしい']]);
+// 実際の説明タブに近い形にする
+panel._cells['2,2'] = '⚙️ 更新情報';
+panel._cells['3,2'] = '08/25(火) 00:00';
+F('menuMakePanel')();
+t(F('panelHeadRow_')(panel) === 8, 'はじめは8行目');
+// 3行目に新しい更新情報を1行足す（いつもの運用）
+panel.insertRowsAfter(2, 1);
+t(F('panelHeadRow_')(panel) === 9, '1つ下がったのを見つける');
+t(F('panelTop_')(panel) === 10, 'ボタンの位置も追いつく');
+// 何回も足す
+panel.insertRowsAfter(2, 5);
+t(F('panelHeadRow_')(panel) === 14, '5行足しても追いつく');
+panel._cells['15,1'] = true;                        // 1つめのボタン
+F('panelWatch')();
+t(lastPut() !== undefined, 'ずれた先でもチェックが効く');
+t(panel._cells['15,1'] === false, 'チェックも外れる');
+has(panel._cells[F('panelResultRow_')(panel) + ',2'], '✅', '結果も正しい行に出る');
+
+console.log('\n■ 遠くまで行っても見つける');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+panel.insertRowsAfter(2, 150);
+t(F('panelHeadRow_')(panel) === 158, '150行足しても見つける');
+
+console.log('\n■ 足りないボタンだけ足す');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+// 4つしか無かった昔の状態を作る（5つめ6つめを消す）
+delete panel._cells['13,1']; delete panel._cells['13,2']; delete panel._cells['13,3'];
+delete panel._cells['14,1']; delete panel._cells['14,2']; delete panel._cells['14,3'];
+panel._cells['9,2'] = '🔄 コードを更新する（じぶんで整えた）';
+F('menuMakePanel')();
+t(panel._cells['9,2'] === '🔄 コードを更新する（じぶんで整えた）',
+  'すでにあるボタンの文言は書き換えない');
+t(String(panel._cells['13,2']).indexOf('全タブ') !== -1, '5つめが足された');
+t(String(panel._cells['14,2']).indexOf('前のコードに戻す') !== -1, '6つめが足された');
+t(panel._cells['13,1'] === false, '足した行にチェックボックスが付く');
+has(alerts[alerts.length - 1].b, '2個のボタンを足しました', '何個足したか伝える');
+
+console.log('\n■ そろっていれば何も足さない');
+// 結果の記録（Y5・Z5）は毎回書かれるので、ボタンの部分だけを比べる
+const grid = () => JSON.stringify(Object.keys(panel._cells)
+  .filter(k => /^\d+,\d+$/.test(k)).sort()
+  .map(k => k + '=' + panel._cells[k]));
+const before = grid();
+F('menuMakePanel')();
+t(grid() === before, 'ボタンのセルを一切さわらない');
+has(alerts[alerts.length - 1].b, '並びはそのまま', 'そう伝える');
+
+console.log('\n■ 入れていない機能を押したとき');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+panel._cells['11,1'] = true;          // 3つめ＝ページのURLをLINEに送る（004-WebApp）
+F('panelWatch')();
+t(panel._cells['11,1'] === false, 'チェックは外れる');
+has(panel._cells[F('panelResultRow_')(panel) + ',2'], 'まだ使えません', 'そう出る');
+has(panel._cells[F('panelResultRow_')(panel) + ',2'], '004-WebApp', 'どれを入れればいいか出る');
+t(lastPut() === undefined, '何も実行されない');
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

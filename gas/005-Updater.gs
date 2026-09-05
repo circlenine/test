@@ -542,6 +542,7 @@ const PANEL_FIRST_ROW = 8;    // まだ置いていないときに、はじめ�
 const PANEL_CHK_COL   = 2;    // はじめて置くときのチェックの列（B。A列は余白として使っている）
 const PANEL_CHK_SIZE  = 50;   // チェックの大きさ（スマホで押しやすいように）
 const PANEL_CHK_H     = 70;   // チェックの行の高さ
+const PANEL_GAP_MAX   = 4;    // ボタンの間に空けてよい行数（押し間違い防止の空行用）
 const PANEL_HEAD      = "▼ チェックを入れると動きます（終わると自動で外れます）";
 // 見出しを探すときの手がかり。文言を少し直しても見つけられるようにしておく
 const PANEL_MARK      = "チェックを入れると動きます";
@@ -607,22 +608,49 @@ function panelItemOf_(text) {
 
 /**
  * 置いてあるボタンを、上から順に読む。
- * 戻り値は [{ row, text, item }]。item が null なら、どれのことか分からない行。
+ * 戻り値は [{ row, value, text, item }]。item が null なら、どれのことか分からない行。
+ *
+ * ボタンの間に空の行があってもよい（押し間違い防止に空けることがあるため）。
+ * 「結果」と書いてある行まで来たら、そこで終わり。
+ * 空の行が続いたときも、そこで終わりとみなす。
  */
 function panelReadRows_(sh) {
   const top = panelTop_(sh);
   if (!top) return [];
   const chk = panelChkCol_(sh, top);
-  const room = Math.min(panelItems_().length + 8, sh.getMaxRows() - top + 1);
-  if (room <= 0) return [];
+  const limit = Math.min(panelItems_().length * 3 + 8, sh.getMaxRows() - top + 1);
+  if (limit <= 0) return [];
 
-  const grid = sh.getRange(top, chk, room, 2).getValues();
+  const grid = sh.getRange(top, 1, limit, 6).getValues();
   const out = [];
-  for (let i = 0; i < grid.length; i++) {
-    if (grid[i][0] !== true && grid[i][0] !== false) break;   // チェックが無い行で終わり
-    out.push({ row: top + i, text: String(grid[i][1]), item: panelItemOf_(grid[i][1]) });
+  let blank = 0;
+  for (let i = 0; i < limit; i++) {
+    const row = grid[i];
+
+    // 「結果」の行に来たら、ボタンはそこまで
+    let isResult = false;
+    for (let c = 0; c < 6; c++) {
+      if (String(row[c]).trim() === "結果") { isResult = true; break; }
+    }
+    if (isResult) break;
+
+    const v = row[chk - 1];
+    if (v === true || v === false) {
+      out.push({ row: top + i, value: v,
+                 text: String(row[chk]), item: panelItemOf_(row[chk]) });
+      blank = 0;
+    } else {
+      blank++;
+      if (blank >= PANEL_GAP_MAX) break;   // ずっと空なら、そこで終わり
+    }
   }
   return out;
+}
+
+/** ボタンの最後の行。無ければ 0 */
+function panelLastRow_(sh) {
+  const rows = panelReadRows_(sh);
+  return rows.length ? rows[rows.length - 1].row : 0;
 }
 
 /** 並びを確かめる。足りないもの・重複・読めない行を返す */
@@ -728,9 +756,9 @@ function panelTop_(sh) {
 function panelResultCell_(sh) {
   const top = panelTop_(sh);
   if (!top) return null;
-  const rows = panelReadRows_(sh);
-  const from = top + (rows.length || panelItems_().length);
-  const room = Math.min(8, sh.getMaxRows() - from + 1);
+  const last = panelLastRow_(sh);
+  const from = (last || top + panelItems_().length - 1) + 1;
+  const room = Math.min(PANEL_GAP_MAX + 4, sh.getMaxRows() - from + 1);
   if (room > 0) {
     const grid = sh.getRange(from, 1, room, 6).getValues();
     for (let i = 0; i < grid.length; i++) {
@@ -886,22 +914,22 @@ function panelSync_(sh, headRow) {
   const note  = chk + 2;
 
   const st = panelCheck_(sh);
-  const have = st.rows.length;
   const miss = st.missing;
-  if (!have || !miss.length) return 0;
+  const last = panelLastRow_(sh);
+  if (!last || !miss.length) return 0;
 
   const add = miss.length;
   // 最後のボタンのすぐ下に足す。こうすると、上の行の書式を引き継いでくれる
-  sh.insertRowsAfter(top + have - 1, add);
+  sh.insertRowsAfter(last, add);
 
   for (let i = 0; i < miss.length; i++) {
-    sh.getRange(top + have + i, label).setValue(miss[i].label);
-    sh.getRange(top + have + i, note).setValue(miss[i].note);
+    sh.getRange(last + 1 + i, label).setValue(miss[i].label);
+    sh.getRange(last + 1 + i, note).setValue(miss[i].note);
   }
-  sh.getRange(top + have, chk, add, 1).insertCheckboxes()
+  sh.getRange(last + 1, chk, add, 1).insertCheckboxes()
     .setFontSize(PANEL_CHK_SIZE)
     .setHorizontalAlignment("center").setVerticalAlignment("middle");
-  try { sh.setRowHeights(top + have, add, PANEL_CHK_H); } catch (e) {}
+  try { sh.setRowHeights(last + 1, add, PANEL_CHK_H); } catch (e) {}
   return add;
 }
 
@@ -992,8 +1020,8 @@ function panelOnEdit(e) {
     if (!top) return;
     if (e.range.getColumn() !== panelChkCol_(sh, top)) return;
     const row = e.range.getRow();
-    const rows = panelReadRows_(sh);
-    if (!rows.length || row < top || row > rows[rows.length - 1].row) return;
+    const last = panelLastRow_(sh);
+    if (!last || row < top || row > last) return;
     panelRun_(row);
   } catch (err) { logErr_("panelOnEdit", err); }
 }
@@ -1004,12 +1032,8 @@ function panelWatch() {
     const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(PANEL_TAB);
     if (!sh) return;
     const rows = panelReadRows_(sh);
-    if (!rows.length) return;
-    const top = panelTop_(sh);
-    const chk = panelChkCol_(sh, top);
-    const vals = sh.getRange(top, chk, rows.length, 1).getValues();
     for (let i = 0; i < rows.length; i++) {
-      if (vals[i][0] === true) { panelRun_(top + i); return; }   // 1回に1つだけ
+      if (rows[i].value === true) { panelRun_(rows[i].row); return; }   // 1回に1つだけ
     }
   } catch (err) { logErr_("panelWatch", err); }
 }
@@ -1027,6 +1051,10 @@ function panelRun_(row) {
   if (!top || row < top) return;
 
   const chk = panelChkCol_(sh, top);
+  // ボタンの無い行（間の空行など）なら、何もしない
+  const cur = sh.getRange(row, chk).getValue();
+  if (cur !== true && cur !== false) return;
+
   // その行に書いてある文言から、どのボタンかを決める
   const text = sh.getRange(row, chk + 1).getValue();
   const item = panelItemOf_(text);

@@ -892,5 +892,79 @@ t(panel._cells['39,2'] === false, 'チェックは外れる');
 has(panel._cells['44,2'], '何をするボタンか分かりません', 'そう出る');
 has(panel._cells['44,2'], 'コードを更新する', '正しい文言の一覧を出す');
 
+console.log('\n■ ボタンの間に空行があってもよい（押し間違い防止）');
+// 実際のスプシと同じ形：1行おきにボタン、間は空
+function gapLayout() {
+  reset([['001-Code.gs', 'あたらしい']]);
+  panel._cells['34,2'] = '💡 まーく用 コード修正開始チェックボタン';
+  panel._cells['35,2'] = '▼ チェックを入れると動きます（終わると自動で外れます）';
+  const labels = ['🔄 コードを更新する', '🔧 更新できる状態か調べる',
+                  '🧹 全タブをまとめて整形する', '⏪ 前のコードに戻す',
+                  '🧹 全タブをまとめて整形する', '⏪ 前のコードに戻す'];
+  for (let i = 0; i < 6; i++) {
+    const r = 36 + i * 2;                       // 36,38,40,42,44,46
+    panel._cells[r + ',2'] = false;
+    panel._cells[r + ',3'] = labels[i];
+  }
+  panel._cells['47,2'] = '結果';
+  panel._cells['48,2'] = '（まだ何も動かしていません）';
+}
+
+gapLayout();
+const gr = F('panelReadRows_')(panel);
+t(gr.length === 6, '空行をまたいで6つとも読める（実際 ' + gr.length + '個）');
+t(gr[0].row === 36 && gr[5].row === 46, '行番号も正しい（36〜46）');
+t(F('panelLastRow_')(panel) === 46, '最後のボタンは46行目');
+t(F('panelResultRow_')(panel) === 48, '結果らんは48行目');
+
+console.log('\n■ 空行があってもチェックが効く');
+panel._cells['40,2'] = true;                    // 40行目＝全タブをまとめて整形する
+vm.runInContext('formatRan = 0;', ctx);
+F('panelWatch')();
+t(vm.runInContext('formatRan', ctx) === 1, '書いてあるとおり整形が動いた');
+t(panel._cells['40,2'] === false, 'チェックも外れる');
+has(panel._cells['48,2'], '全タブをまとめて整形', '結果も正しい行に出る');
+
+console.log('\n■ いちばん下のボタンでも効く');
+gapLayout();
+panel._cells['46,2'] = true;
+F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 2,
+                            getRow: () => 46 }, value: 'TRUE' });
+t(panel._cells['46,2'] === false, '46行目でも効く');
+
+console.log('\n■ 空行そのものは押せない');
+gapLayout();
+F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 2,
+                            getRow: () => 37 }, value: 'TRUE' });
+t(panel._cells['48,2'] === '（まだ何も動かしていません）', '空行では何も起きない');
+
+console.log('\n■ 「結果」の行より下は見に行かない');
+gapLayout();
+panel._cells['52,2'] = false;                   // 結果より下にチェックがあっても
+panel._cells['52,3'] = '🔄 コードを更新する';
+t(F('panelReadRows_')(panel).length === 6, '結果の行で止まる');
+
+console.log('\n■ 空行が続いたら、そこで終わり');
+gapLayout();
+delete panel._cells['44,2']; delete panel._cells['44,3'];
+delete panel._cells['46,2']; delete panel._cells['46,3'];
+delete panel._cells['47,2']; delete panel._cells['48,2'];
+t(F('panelReadRows_')(panel).length === 4, '空きが続けば、そこまでを読む');
+
+console.log('\n■ 空行の形でも、足りないものは最後の下に足す');
+gapLayout();
+// 重複を直した状態にする
+panel._cells['44,3'] = '💬 ページのURLをLINEに送る';
+panel._cells['46,3'] = '🩺 ページが開けるか調べる';
+t(F('panelCheck_')(panel).missing.length === 0, 'そろっている');
+// 5つめ6つめを消して、足りない状態を作る
+delete panel._cells['44,2']; delete panel._cells['44,3'];
+delete panel._cells['46,2']; delete panel._cells['46,3'];
+const miss = F('panelCheck_')(panel).missing;
+t(miss.length === 2, '2つ足りない');
+F('menuMakePanel')();
+t(F('panelCheck_')(panel).missing.length === 0, '足したのでそろった');
+t(F('panelReadRows_')(panel).length === 6, '6つになった');
+
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

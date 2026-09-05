@@ -589,5 +589,59 @@ resetSheets();
 vm.runInContext('_cfgCache = null', ctx);
 ok(F('cfgOpuFrom_')() === 17 * 60, 'タブが無ければ初期値');
 
+console.log('\n■ 開いたときのチェック（右下のポップアップ）');
+{
+  // toast と、動いた記録を見張る
+  const toasts = [];
+  const props = {};
+  const realSA = ctx.SpreadsheetApp;
+  let activeName = 'ﾀﾞｲｽｹ';
+  resetSheets();
+  ctx.SpreadsheetApp = Object.assign({}, realSA, {
+    getActiveSpreadsheet: () => ({
+      getSheetByName: n => TABS[n] ? makeSheet(n, TABS[n]) : null,
+      getActiveSheet: () => makeSheet(activeName, TABS[activeName] || []),
+      toast: (msg, title) => toasts.push({ title: title, msg: msg })
+    })
+  });
+  const realProps = ctx.PropertiesService;
+  ctx.PropertiesService = { getScriptProperties: () => ({
+    getProperty: k => (k in props ? props[k] : null),
+    setProperty: (k, v) => { props[k] = String(v); },
+    deleteProperty: k => { delete props[k]; }
+  })};
+
+  // ① 対象のタブ → チェック中の知らせが出る
+  activeName = 'ﾀﾞｲｽｹ';
+  F('onOpenCheck')();
+  has((toasts[0] || {}).title, 'チェック中', '対象タブでは「チェック中」が出る');
+  ok(toasts.length >= 2, 'そのあと結果の知らせも出る');
+  ok(String(props['LAST_OPENCHECK'] || '').indexOf('ﾀﾞｲｽｹ') !== -1,
+     '動いた記録が残る（あとで調べられる）');
+
+  // ② 対象外のタブ → 黙らずに一言出す
+  toasts.length = 0;
+  activeName = '設定';
+  TABS['設定'] = [];
+  F('onOpenCheck')();
+  ok(toasts.length === 1, '対象外のタブでも1回だけ知らせる');
+  has(toasts[0].title, '対象外', '「対象外です」と分かる');
+  ok(String(props['LAST_OPENCHECK'] || '').indexOf('設定') !== -1,
+     '対象外でも動いた記録は残る');
+
+  // ③ エラーは手元に残る
+  delete props['LAST_ERRORS'];
+  F('logErr_')('テスト', new Error('わざと失敗'));
+  const errs = JSON.parse(props['LAST_ERRORS']);
+  ok(errs.length === 1 && errs[0].where === 'テスト', 'エラーが記録される');
+  has(errs[0].msg, 'わざと失敗', '中身も残る');
+  for (let i = 0; i < 8; i++) F('logErr_')('x' + i, new Error('e' + i));
+  ok(JSON.parse(props['LAST_ERRORS']).length === 5, 'ためこまず直近5件だけ残す');
+
+  ctx.SpreadsheetApp = realSA;
+  ctx.PropertiesService = realProps;
+  vm.runInContext('_cfgCache = null', ctx);
+}
+
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

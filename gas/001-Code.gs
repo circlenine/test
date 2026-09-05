@@ -1,12 +1,20 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C015ver  （2026/09/06）  ★★★   ← もとは version 232
+ *  ★★★  C016ver  （2026/09/06）  ★★★   ← もとは version 232
  *
  *  ファイル記号: C=001-Code.gs / L=003-LineReport.gs / E=002-Extras.gs
  *  ※ Apps Script 上のファイル名も「001-Code」にそろえてください
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C016ver]
+ *   ・右下のポップアップが出ないときに、原因を調べられるようにした
+ *     メニュー「🩺 右下のポップアップを調べる」
+ *     トリガーの有無／最後に動いた時刻／開いているタブ／直近のエラーを出す
+ *   ・対象外のタブ（説明・設定）を開いたときも、短く一言出すようにした
+ *     今までは黙っていたので、壊れたのか対象外なのか分からなかった
+ *   ・エラーを記録に残すようにした（直近5件。スマホからでも見られる）
  *
  *  [C015ver]
  *   ・GitHub 上のファイル名を 001-Code.gs / 002-Extras.gs / 003-LineReport.gs にした
@@ -322,7 +330,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C015ver";
+const CODE_VERSION = "C016ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -2718,7 +2726,8 @@ function onOpen() {
     .addItem("🔑 LINEトークンを設定", "menuSetToken")
     .addItem("⏱ 毎日17:00の自動チェックをONにする", "menuInstallTriggers")
     .addItem("⏱ 開いたときのチェックを ON", "menuOpenCheckOn")
-    .addItem("⏸ 開いたときのチェックを OFF", "menuOpenCheckOff");
+    .addItem("⏸ 開いたときのチェックを OFF", "menuOpenCheckOff")
+    .addItem("🩺 右下のポップアップを調べる", "menuOpenCheckStatus");
 
   const m2 = ui.createMenu("🅱️ ふだんの整形")
     .addItem("🧹 全タブをまとめて整形する", "menuFormatAll")
@@ -2771,7 +2780,18 @@ function onOpenCheck() {
   let name = "";
   try {
     name = ss.getActiveSheet().getName();
-    if (ALL_TABS.indexOf(name) === -1) return;
+    // 動いたことの記録。「本当に動いているのか」を後から確かめられるようにする
+    try {
+      PropertiesService.getScriptProperties()
+        .setProperty("LAST_OPENCHECK", new Date().toISOString() + "|" + name);
+    } catch (e) {}
+
+    if (ALL_TABS.indexOf(name) === -1) {
+      // 説明・設定などは整形の対象外。黙っていると壊れたように見えるので一言だけ出す
+      ss.toast("記録のタブ（" + PERSONAL_TABS[0] + " など）を開くとチェックします",
+               "💤 " + name + "タブは自動チェックの対象外です", 4);
+      return;
+    }
 
     const sh = ss.getSheetByName(name);
     const rows = Math.max(0, sh.getLastRow() - START_ROW + 1);
@@ -2799,6 +2819,77 @@ function onOpenCheck() {
 }
 
 /** 開いたときのチェックを ON にする */
+/**
+ * 右下のポップアップが出ないときに、どこで止まっているかを調べる。
+ * スマホからでも原因が分かるように、実行ログを見に行かなくてよい形にしてある。
+ */
+function menuOpenCheckStatus() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const pr = PropertiesService.getScriptProperties();
+  const L = [];
+
+  // ① トリガーが入っているか
+  let n = 0;
+  try {
+    ScriptApp.getProjectTriggers().forEach(function (t) {
+      if (t.getHandlerFunction() === "onOpenCheck") n++;
+    });
+  } catch (e) { L.push("⚠️ トリガーを調べられませんでした：" + e.message); }
+  L.push(n > 0 ? "✅ 開いたときのチェック：ON（" + n + "個）"
+               : "❌ 開いたときのチェック：OFF ← これが原因です");
+
+  // ② 最後に動いたのはいつか
+  const last = pr.getProperty("LAST_OPENCHECK") || "";
+  if (last) {
+    const p = last.split("|");
+    const d = new Date(p[0]);
+    L.push("　最後に動いた：" + Utilities.formatDate(d, Session.getScriptTimeZone(),
+             "M/d HH:mm") + "（" + (p[1] || "?") + "タブ）");
+  } else {
+    L.push("　まだ一度も動いていません");
+  }
+
+  // ③ いま開いているタブ
+  const cur = ss.getActiveSheet().getName();
+  L.push("");
+  L.push("いま開いているタブ：" + cur);
+  L.push(ALL_TABS.indexOf(cur) !== -1
+    ? "　→ 対象のタブです"
+    : "　→ 対象外です。記録のタブ（" + PERSONAL_TABS.join("・") + " など）を\n" +
+      "　　開いた状態で開き直すと出ます");
+
+  // ④ 3つのファイルがそろっているか
+  L.push("");
+  L.push("001-Code       : " + (typeof CODE_VERSION === "string" ? CODE_VERSION : "❌ 入っていません"));
+  L.push("002-Extras     : " + (typeof EX_VERSION   === "string" ? EX_VERSION   : "（未導入）"));
+  L.push("003-LineReport : " + (typeof LR_VERSION   === "string" ? LR_VERSION   : "❌ 入っていません"));
+
+  // ⑤ 直近のエラー
+  let errs = [];
+  try { errs = JSON.parse(pr.getProperty("LAST_ERRORS") || "[]"); } catch (e) {}
+  L.push("");
+  if (!errs.length) {
+    L.push("直近のエラー：ありません");
+  } else {
+    L.push("直近のエラー（新しい順）");
+    errs.forEach(function (x) {
+      const d = new Date(x.at);
+      L.push("　" + Utilities.formatDate(d, Session.getScriptTimeZone(), "M/d HH:mm") +
+             " [" + x.where + "] " + x.msg);
+    });
+  }
+
+  if (n === 0) {
+    const a = ui.alert("🩺 右下のポップアップを調べる",
+      L.join("\n") + "\n\n──────────────\nいま ON にしますか？",
+      ui.ButtonSet.YES_NO);
+    if (a === ui.Button.YES) menuOpenCheckOn();
+    return;
+  }
+  ui.alert("🩺 右下のポップアップを調べる", L.join("\n"), ui.ButtonSet.OK);
+}
+
 function menuOpenCheckOn() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   ScriptApp.getProjectTriggers().forEach(function (t) {
@@ -4594,6 +4685,15 @@ function menuFindBadDates() {
 }
 
 function logErr_(where, err) {
-  console.error("[" + where + "] " + (err && err.message ? err.message : err));
+  const msg = (err && err.message ? err.message : String(err));
+  console.error("[" + where + "] " + msg);
+  // 実行ログはスマホから見づらいので、直近のぶんだけ手元にも残しておく
+  try {
+    const pr = PropertiesService.getScriptProperties();
+    let list = [];
+    try { list = JSON.parse(pr.getProperty("LAST_ERRORS") || "[]"); } catch (e) {}
+    list.unshift({ at: new Date().toISOString(), where: where, msg: String(msg).slice(0, 200) });
+    pr.setProperty("LAST_ERRORS", JSON.stringify(list.slice(0, 5)));
+  } catch (e) { /* 記録できなくても本題は止めない */ }
 }
 

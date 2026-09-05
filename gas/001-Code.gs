@@ -2846,7 +2846,7 @@ function onOpen() {
       .addItem("🔧 更新できる状態か調べる", "menuUpdateStatus")
       .addItem("🔑 GitHubの鍵を設定", "menuSetGitHub")
       .addSeparator()
-      .addItem("🧰 そうさタブを作る（スマホアプリ用）", "menuMakePanel")
+      .addItem("🧰 そうさボタンを置く（説明タブ・スマホアプリ用）", "menuMakePanel")
       .addItem("⏸ 1分おきの見張りを止める", "menuPanelWatchOff")
       .addSeparator()
       .addItem("💾 いまのコードを保存しておく", "menuBackupCode")

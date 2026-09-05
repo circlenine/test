@@ -51,13 +51,11 @@ const toasts = [], alerts = [], cells = {};
 let uiWorks = true;
 ctx.SpreadsheetApp = {
   flush: () => {},
-  ProtectionType: { SHEET: 'SHEET' },
+  ProtectionType: { SHEET: 'SHEET', RANGE: 'RANGE' },
   newDataValidation: () => ({ requireCheckbox: () => ({ build: () => ({}) }) }),
   getActiveSpreadsheet: () => ({
     toast: (m, t) => toasts.push({ t: t, m: m }),
-    getSheetByName: n => (n === '説明')
-      ? { getRange: a1 => ({ setValue: v => { cells[a1] = String(v); } }) }
-      : (n === 'そうさ' ? panel : null),
+    getSheetByName: n => (n === '説明') ? panel : null,
     insertSheet: () => (panel = mkPanel())
   }),
   getUi: () => {
@@ -94,7 +92,7 @@ ctx.LockService = { getScriptLock: () => ({ tryLock: () => lockFree,
 let lockFree = true;
 ctx.logErr_ = (w, e) => { errs.push(w + ':' + (e && e.message ? e.message : e)); };
 const errs = [];
-// 「そうさ」タブの偽物
+// 「説明」タブの偽物（パネルはこの中の8行目から下に置かれる）
 let panel;
 function mkPanel() {
   const cells = {};
@@ -105,32 +103,44 @@ function mkPanel() {
     _prot: prot,
     _failProtect: v => { protFails = v; },
     getProtections: () => prot.slice(),
-    protect: () => {
-      if (protFails) throw new Error('保護できません');
-      const p = {
-        _editors: ['tomodachi@example.com', 'stranger@example.com'],
-        _domain: true, _removed: false,
-        setDescription() { return p; },
-        getEditors: () => p._editors.slice(),
-        removeEditors: list => { p._editors = p._editors.filter(e => list.indexOf(e) === -1); },
-        canDomainEdit: () => p._domain,
-        setDomainEdit: v => { p._domain = v; },
-        canEdit: () => true,
-        remove: () => { p._removed = true;
-                        const i = prot.indexOf(p); if (i >= 0) prot.splice(i, 1); }
-      };
-      prot.push(p);
-      return p;
-    },
-    getName: () => 'そうさ',
+
+    getName: () => '説明',
     getMaxRows: () => 100,
-    clear: () => {},
+    insertRowsAfter: () => {},
+    clear: () => { throw new Error('説明タブを clear してはいけません'); },
     setFrozenRows: () => {}, setRowHeight: () => {}, setRowHeights: () => {},
     setColumnWidth() { return this; },
     insertCheckboxes() { return this; },
     getRange: (r, c, nr, nc) => {
+      // getRange("Y5") のような呼び方にも応える
+      if (typeof r === 'string') {
+        const key = r;
+        const S = { setValue: v => { cells[key] = String(v); return S; },
+                    getValue: () => cells[key] };
+        return new Proxy(S, { get: (t, k) => (k in t ? t[k] : () => S) });
+      }
       let px;
       const R = {
+        getA1Notation: () => 'A' + r + ':A' + (r + (nr || 1) - 1),
+        protect: () => {
+          if (protFails) throw new Error('保護できません');
+          const p = {
+            _a1: 'A' + r + ':A' + (r + (nr || 1) - 1),
+            _editors: ['tomodachi@example.com', 'stranger@example.com'],
+            _domain: true,
+            setDescription() { return p; },
+            getRange: () => ({ getA1Notation: () => p._a1 }),
+            getEditors: () => p._editors.slice(),
+            removeEditors: list => {
+              p._editors = p._editors.filter(e => list.indexOf(e) === -1); },
+            canDomainEdit: () => p._domain,
+            setDomainEdit: v => { p._domain = v; },
+            canEdit: () => true,
+            remove: () => { const i = prot.indexOf(p); if (i >= 0) prot.splice(i, 1); }
+          };
+          prot.push(p);
+          return p;
+        },
         setValue: v => { cells[r + ',' + c] = v; return px; },
         getValue: () => cells[r + ',' + c],
         getValues: () => {
@@ -223,7 +233,8 @@ function reset(driveFiles, projFiles) {
   Object.keys(cells).forEach(k => delete cells[k]);
   apiCalls = []; apiFail = null; uiWorks = true;
   Object.keys(props).forEach(k => delete props[k]);
-  gh = null; triggers = []; lockFree = true; errs.length = 0; panel = null;
+  gh = null; triggers = []; lockFree = true; errs.length = 0;
+  panel = mkPanel();          // 「説明」タブは最初からある
   if (driveFiles) {
     const f = mkFolder('taxi-gas');
     driveFiles.forEach(([n, c, u]) => f._files.push(mkFile(n, c, u)));
@@ -360,7 +371,7 @@ uiWorks = false;
 F('menuUpdateCode')();
 t(lastPut() !== undefined, 'ダイアログ無しでも更新できる');
 t(toasts.length > 0, 'トーストで知らせる');
-has(cells['Z5'], '更新しました', '説明タブZ5にも残る');
+has(panel._cells['Z5'], '更新しました', '説明タブZ5にも残る');
 
 console.log('\n■ 状態を調べる');
 reset([['001-Code.gs', 'あたらしい']]);
@@ -439,12 +450,13 @@ gh = { dir: [{ name: '001-Code.gs', path: 'gas/001-Code.gs', type: 'file' },
 F('menuUpdateStatus')();
 t(alerts[0].b.indexOf('github_pat_himitsu') === -1, '状態画面に鍵を出さない');
 has(alerts[0].b, '読み元：GitHub', '読み元は出す');
-t(JSON.stringify(cells).indexOf('github_pat_himitsu') === -1, 'シートにも書かない');
+t(JSON.stringify(panel._cells).indexOf('github_pat_himitsu') === -1, 'シートにも書かない');
 
 console.log('\n■ そうさタブ（スマホアプリ用のボタン）');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
-t(panel !== null, 'タブが作られた');
+t(String(panel._cells['8,2']) === '▼ チェックを入れると動きます（終わると自動で外れます）',
+  '説明タブの8行目に見出しが入る');
 let items = F('panelItems_')();
 // このテストでは 005-Updater しか読み込んでいないので、
 // 004-WebApp や 001-Code の機能は出てこないのが正しい
@@ -477,7 +489,7 @@ t(triggers.filter(x => x.getHandlerFunction() === 'panelOnEdit').length === 1,
 console.log('\n■ チェックすると動く');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
-const TOP = 3;
+const TOP = 9;   // 見出しが8行目、ボタンは9行目から
 panel._cells[TOP + ',1'] = true;                       // 1行目＝コードを更新する
 F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 1,
                             getRow: () => TOP }, value: 'TRUE' });
@@ -537,10 +549,54 @@ F('panelWatch')();
 t(panel._cells[TOP + ',1'] === false, 'チェックは外れる（押しっぱなしにならない）');
 has(panel._cells[resRow + ',2'], '✅', '処理自体は最後まで通る');
 
-console.log('\n■ そうさタブは自分だけが押せるようにする');
+console.log('\n■ 8行目より上は絶対に触らない');
+reset([['001-Code.gs', 'あたらしい']]);
+// 説明タブに、もともと入っているものを置いておく
+panel._cells['1,1'] = 'このシートの説明';
+panel._cells['2,2'] = '大事なメモ';
+panel._cells['6,1'] = '6行目のなにか';
+panel._cells['Z1'] = 'Cgroup123';
+panel._cells['Z2'] = 'dashboardId';
+F('menuMakePanel')();
+t(panel._cells['1,1'] === 'このシートの説明', '1行目はそのまま');
+t(panel._cells['2,2'] === '大事なメモ', '2行目はそのまま');
+t(panel._cells['6,1'] === '6行目のなにか', '6行目はそのまま');
+t(panel._cells['Z1'] === 'Cgroup123', 'Z1（グループID）はそのまま');
+t(panel._cells['Z2'] === 'dashboardId', 'Z2（ダッシュボード）はそのまま');
+t(panel._cells['7,1'] === undefined, '7行目は空のまま');
+t(String(panel._cells['8,2']).indexOf('チェックを入れると') !== -1, '8行目に見出し');
+t(String(panel._cells['9,2']).indexOf('コードを更新') !== -1, '9行目から1つめのボタン');
+
+console.log('\n■ 置き場所に何か入っていたら、上書きせずに止める');
+reset([['001-Code.gs', 'あたらしい']]);
+panel._cells['10,2'] = '消されたら困るもの';
+F('menuMakePanel')();
+t(panel._cells['10,2'] === '消されたら困るもの', '中身を消していない');
+t(panel._cells['8,2'] === undefined, '見出しも書いていない（何も書かずに止めた）');
+has(alerts[alerts.length - 1].t, '置けませんでした', 'そう伝える');
+has(alerts[alerts.length - 1].b, '10行目', 'どこに何があったか教える');
+has(alerts[alerts.length - 1].b, '消されたら困るもの', '中身も見せる');
+t(triggers.length === 0, '止めたときはトリガーも作らない');
+
+console.log('\n■ 2回目からは、自分が置いたものとして上書きしてよい');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+const firstHead = panel._cells['8,2'];
+F('menuMakePanel')();
+t(panel._cells['8,2'] === firstHead, '2回目も普通に置き直せる');
+has(alerts[alerts.length - 1].t, 'ボタンを置きました', '止まらない');
+
+console.log('\n■ 説明タブを clear しない');
+reset([['001-Code.gs', 'あたらしい']]);
+panel._cells['3,1'] = 'きえたら困る';
+F('menuMakePanel')();
+t(panel._cells['3,1'] === 'きえたら困る', 'clear していない（していたら例外で落ちる作りにしてある）');
+
+console.log('\n■ チェックのらんだけを自分だけが押せるようにする');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
 t(panel._prot.length === 1, '保護がかかる');
+t(panel._prot[0]._a1 === 'A9:A11', 'チェックのらんだけを守る（説明タブ全体ではない）');
 t(panel._prot[0]._editors.length === 0, 'ほかの編集者は外される（＝自分だけ）');
 t(panel._prot[0]._domain === false, '同じドメインの人もまとめて外す');
 has(alerts[alerts.length - 1].b, 'あなただけが触れるように', 'そう伝える');
@@ -552,13 +608,7 @@ t(panel._prot.length === 1, '保護は1つのまま');
 
 console.log('\n■ 保護をかけられなかったときは、はっきり言う');
 reset([['001-Code.gs', 'あたらしい']]);
-panel = mkPanel();
 panel._failProtect(true);
-ctx.SpreadsheetApp.getActiveSpreadsheet = () => ({
-  toast: (m, t) => toasts.push({ t: t, m: m }),
-  getSheetByName: n => (n === 'そうさ' ? panel : null),
-  insertSheet: () => panel
-});
 F('menuMakePanel')();
 has(alerts[alerts.length - 1].b, '保護をかけられませんでした', '黙って済ませない');
 has(alerts[alerts.length - 1].b, '誰でもチェックを押せます', '何が起きるか書く');

@@ -2,7 +2,15 @@
  * ================================================================
  *  コードの自動更新（005-Updater.gs）
  *
- *  ★★★  U002ver  （2026/09/06）  ★★★
+ *  ★★★  U003ver  （2026/09/06）  ★★★
+ *
+ *  [U003ver]
+ *   ・ボタンの名前を「[1] コードを更新する」のように番号つきにした
+ *     絵文字より番号のほうが、やりとりで取り違えにくいため
+ *   ・並び順を、スプシに置いてあるとおりの番号順にそろえた
+ *     （3=全タブ整形、4=前のコードに戻す、5=URLをLINE、6=ページ確認）
+ *   ・文言で見分けるのに加えて、番号でも見分けられるようにした
+ *     文言を書き換えて分からなくなっても、番号が残っていれば動く
  *
  *  [U002ver]
  *   ・「そうさ」タブを作るのをやめ、「説明」タブに間借りする形にした
@@ -50,7 +58,7 @@
  * ================================================================
  */
 
-const UPD_VERSION = "U002ver";
+const UPD_VERSION = "U003ver";
 
 /** ドライブ上の置き場所（GitHubを使わないときの読み元） */
 const UPD_FOLDER  = "taxi-gas";
@@ -575,18 +583,18 @@ const PANEL_SCAN      = 300;  // 見出しをどこまで探すか（行）
  */
 function panelItems_() {
   return [
-    { key: "コードを更新",       label: "🔄 コードを更新する",         fn: "menuUpdateCode",
+    { key: "コードを更新",         label: "[1] コードを更新する",        fn: "menuUpdateCode",
       note: "GitHubの新しいコードを取り込み、デプロイもやり直します" },
-    { key: "更新できる状態",     label: "🔧 更新できる状態か調べる",   fn: "menuUpdateStatus",
+    { key: "更新できる状態",       label: "[2] 更新できる状態か調べる",  fn: "menuUpdateStatus",
       note: "APIが使えるか、どこから読むかを見ます" },
-    { key: "URLをLINE",          label: "💬 ページのURLをLINEに送る",  fn: "menuWebAppSendLine",
-      note: "グループLINEにリンクを送ります" },
-    { key: "開けるか調べる",     label: "🩺 ページが開けるか調べる",   fn: "menuWebAppCheck",
-      note: "みんなの記録ページが本当に開けるか、実際に試します" },
-    { key: "全タブをまとめて整形", label: "🧹 全タブをまとめて整形する", fn: "menuFormatAll",
+    { key: "全タブをまとめて整形", label: "[3] 全タブをまとめて整形する", fn: "menuFormatAll",
       note: "並び順・色・行の高さを整えます" },
-    { key: "前のコードに戻す",   label: "⏪ 前のコードに戻す",         fn: "menuRestoreCode",
-      note: "更新で壊れたとき用。直前の状態に戻します" }
+    { key: "前のコードに戻す",     label: "[4] 前のコードに戻す",        fn: "menuRestoreCode",
+      note: "更新で壊れたとき用。直前の状態に戻します" },
+    { key: "URLをLINE",            label: "[5] ページのURLをLINEに送る", fn: "menuWebAppSendLine",
+      note: "グループLINEにリンクを送ります" },
+    { key: "開けるか調べる",       label: "[6] ページが開けるか調べる",  fn: "menuWebAppCheck",
+      note: "みんなの記録ページが本当に開けるか、実際に試します" }
   ];
 }
 
@@ -594,10 +602,10 @@ function panelItems_() {
 const PANEL_FROM = {
   menuUpdateCode:     "005-Updater",
   menuUpdateStatus:   "005-Updater",
-  menuWebAppSendLine: "004-WebApp",
-  menuWebAppCheck:    "004-WebApp",
   menuFormatAll:      "001-Code",
-  menuRestoreCode:    "005-Updater"
+  menuRestoreCode:    "005-Updater",
+  menuWebAppSendLine: "004-WebApp",
+  menuWebAppCheck:    "004-WebApp"
 };
 
 /** その関数がこのプロジェクトに入っているか */
@@ -618,8 +626,18 @@ function panelItemOf_(text) {
   const t = String(text == null ? "" : text).replace(/[\s\u3000]/g, "");
   if (!t) return null;
   const items = panelItems_();
+
+  // まずは書いてある言葉で。人が読んでいるのはこちらなので、こちらを優先する
   for (let i = 0; i < items.length; i++) {
     if (t.indexOf(items[i].key.replace(/[\s\u3000]/g, "")) !== -1) return items[i];
+  }
+
+  // 言葉で分からなければ、先頭の [1] のような番号で。
+  // 文言をうっかり書き換えてしまっても、番号が残っていれば動く
+  const m = t.match(/^[\[［(（]?([1-9])[\]］)）\.。]/);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    if (n >= 1 && n <= items.length) return items[n - 1];
   }
   return null;
 }

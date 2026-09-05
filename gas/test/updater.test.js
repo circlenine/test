@@ -539,6 +539,9 @@ t(items.length === 6, 'いつも6つ並ぶ（' + items.length + '個）');
 t(items[0].fn === 'menuUpdateCode', '1つめは「コードを更新する」');
 t(items.some(x => x.fn === 'menuWebAppSendLine'),
   '入れていない機能も並べる（数が変わると行がずれるため）');
+t(items.map(x => x.fn).join(',') ===
+  'menuUpdateCode,menuUpdateStatus,menuFormatAll,menuRestoreCode,' +
+  'menuWebAppSendLine,menuWebAppCheck', 'スプシに置いてある番号どおりの並び');
 t(F('panelHas_')('menuUpdateCode') === true, '入っている機能は分かる');
 t(F('panelHas_')('menuWebAppSendLine') === false, '入っていない機能も分かる');
 t(F('panelHas_')('menuUpdateCode') === true, 'ある関数は true');
@@ -781,12 +784,12 @@ F('menuMakePanel')();
 // 4つしか無かった昔の状態を作る（5つめ6つめを消す）
 delete panel._cells['13,2']; delete panel._cells['13,3']; delete panel._cells['13,4'];
 delete panel._cells['14,2']; delete panel._cells['14,3']; delete panel._cells['14,4'];
-panel._cells['9,3'] = '🔄 コードを更新する（じぶんで整えた）';
+panel._cells['9,3'] = '[1] コードを更新する（じぶんで整えた）';
 F('menuMakePanel')();
-t(panel._cells['9,3'] === '🔄 コードを更新する（じぶんで整えた）',
+t(panel._cells['9,3'] === '[1] コードを更新する（じぶんで整えた）',
   'すでにあるボタンの文言は書き換えない');
-t(String(panel._cells['13,3']).indexOf('全タブ') !== -1, '5つめが足された');
-t(String(panel._cells['14,3']).indexOf('前のコードに戻す') !== -1, '6つめが足された');
+t(String(panel._cells['13,3']).indexOf('URLをLINE') !== -1, '5つめが足された');
+t(String(panel._cells['14,3']).indexOf('開けるか調べる') !== -1, '6つめが足された');
 t(panel._cells['13,2'] === false, '足した行にチェックボックスが付く');
 has(alerts[alerts.length - 1].b, '2個のボタンを足しました', '何個足したか伝える');
 
@@ -803,9 +806,9 @@ has(alerts[alerts.length - 1].b, '並びはそのまま', 'そう伝える');
 console.log('\n■ 入れていない機能を押したとき');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
-panel._cells['11,2'] = true;          // 3つめ＝ページのURLをLINEに送る（004-WebApp）
+panel._cells['13,2'] = true;          // 5つめ＝ページのURLをLINEに送る（004-WebApp）
 F('panelWatch')();
-t(panel._cells['11,2'] === false, 'チェックは外れる');
+t(panel._cells['13,2'] === false, 'チェックは外れる');
 has(panel._cells[F('panelResultRow_')(panel) + ',3'], 'まだ使えません', 'そう出る');
 has(panel._cells[F('panelResultRow_')(panel) + ',3'], '004-WebApp', 'どれを入れればいいか出る');
 t(lastPut() === undefined, '何も実行されない');
@@ -846,9 +849,9 @@ function realLayout() {
   reset([['001-Code.gs', 'あたらしい']]);
   panel._cells['34,2'] = '💡 まーく用 コード修正開始チェックボタン';
   panel._cells['35,2'] = '▼ チェックを入れると動きます（終わると自動で外れます）';
-  const labels = ['🔄 コードを更新する', '🔧 更新できる状態か調べる',
-                  '🧹 全タブをまとめて整形する', '⏪ 前のコードに戻す',
-                  '🧹 全タブをまとめて整形する', '⏪ 前のコードに戻す'];
+  const labels = ['[1] コードを更新する', '[2] 更新できる状態か調べる',
+                  '[3] 全タブをまとめて整形する', '[4] 前のコードに戻す',
+                  '[3] 全タブをまとめて整形する', '[4] 前のコードに戻す'];  // 5・6が重複
   for (let i = 0; i < 6; i++) {
     panel._cells[(36 + i) + ',2'] = false;      // B列＝チェック
     panel._cells[(36 + i) + ',3'] = labels[i];  // C列＝ラベル
@@ -860,9 +863,9 @@ function realLayout() {
 realLayout();
 t(F('panelHeadRow_')(panel) === 35, '見出しは35行目');
 t(F('panelChkCol_')(panel, 36) === 2, 'チェックはB列');
-t(F('panelItemOf_')('🧹 全タブをまとめて整形する').fn === 'menuFormatAll',
+t(F('panelItemOf_')('[3] 全タブをまとめて整形する').fn === 'menuFormatAll',
   '文言から正しい機能を引ける');
-t(F('panelItemOf_')('🔄 コードを更新する').fn === 'menuUpdateCode', '1つめも引ける');
+t(F('panelItemOf_')('[1] コードを更新する').fn === 'menuUpdateCode', '1つめも引ける');
 t(F('panelItemOf_')('なにこれ') === null, '知らない文言は null');
 
 console.log('\n■ 「全タブをまとめて整形する」を押したら、本当に整形が動く');
@@ -892,8 +895,8 @@ has(alerts[alerts.length - 1].b, 'ページのURLをLINEに送る', '足りな�
 has(alerts[alerts.length - 1].b, '書き換えてください', '直し方も教える');
 
 console.log('\n■ 文言を直したら、そのまま使える');
-panel._cells['40,3'] = '💬 ページのURLをLINEに送る';
-panel._cells['41,3'] = '🩺 ページが開けるか調べる';
+panel._cells['40,3'] = '[5] ページのURLをLINEに送る';
+panel._cells['41,3'] = '[6] ページが開けるか調べる';
 const st = F('panelCheck_')(panel);
 t(st.dup.length === 0, '重複が消えた');
 t(st.missing.length === 0, '足りないものも無い');
@@ -916,9 +919,9 @@ function gapLayout() {
   reset([['001-Code.gs', 'あたらしい']]);
   panel._cells['34,2'] = '💡 まーく用 コード修正開始チェックボタン';
   panel._cells['35,2'] = '▼ チェックを入れると動きます（終わると自動で外れます）';
-  const labels = ['🔄 コードを更新する', '🔧 更新できる状態か調べる',
-                  '🧹 全タブをまとめて整形する', '⏪ 前のコードに戻す',
-                  '🧹 全タブをまとめて整形する', '⏪ 前のコードに戻す'];
+  const labels = ['[1] コードを更新する', '[2] 更新できる状態か調べる',
+                  '[3] 全タブをまとめて整形する', '[4] 前のコードに戻す',
+                  '[5] ページのURLをLINEに送る', '[6] ページが開けるか調べる'];
   for (let i = 0; i < 6; i++) {
     const r = 36 + i * 2;                       // 36,38,40,42,44,46
     panel._cells[r + ',2'] = false;
@@ -1002,10 +1005,35 @@ F('panelWatch')();
 t(true, '結合の中でも落ちない');
 
 console.log('\n■ バージョン');
-t(vm.runInContext('UPD_VERSION', ctx) === 'U002ver', 'U002ver になっている');
+t(vm.runInContext('UPD_VERSION', ctx) === 'U003ver', 'U003ver になっている');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuUpdateStatus')();
-has(alerts[0].b, 'U002ver', '状態画面にバージョンが出る');
+has(alerts[0].b, 'U003ver', '状態画面にバージョンが出る');
+
+console.log('\n■ 番号でも見分けられる（文言を書き換えてしまったとき用）');
+{
+  const P = F('panelItemOf_');
+  // 文言がそろっているときは、文言で決まる
+  t(P('[1] コードを更新する').fn === 'menuUpdateCode', '[1] は更新');
+  t(P('[2] 更新できる状態か調べる').fn === 'menuUpdateStatus', '[2] は状態');
+  t(P('[3] 全タブをまとめて整形する').fn === 'menuFormatAll', '[3] は整形');
+  t(P('[4] 前のコードに戻す').fn === 'menuRestoreCode', '[4] は巻き戻し');
+  t(P('[5] ページのURLをLINEに送る').fn === 'menuWebAppSendLine', '[5] はLINE送信');
+  t(P('[6] ページが開けるか調べる').fn === 'menuWebAppCheck', '[6] はページ確認');
+
+  // 文言を分からなく書き換えても、番号が残っていれば動く
+  t(P('[4] じぶんで書いた名前').fn === 'menuRestoreCode', '番号だけでも引ける');
+  t(P('（5）なにか').fn === 'menuWebAppSendLine', '全角のカッコでも引ける');
+  t(P('6. なにか').fn === 'menuWebAppCheck', '「6.」の形でも引ける');
+  t(P('[9] なにか') === null, '無い番号は null');
+  t(P('なにか [3] うしろ') === null, '先頭に無い番号は使わない');
+
+  // 絵文字だけの昔の書き方も、まだ読める
+  t(P('🔄 コードを更新する').fn === 'menuUpdateCode', '昔の絵文字つきでも引ける');
+
+  // 文言と番号が食い違ったら、文言のほうを信じる（人が読むのはそちらなので）
+  t(P('[1] 前のコードに戻す').fn === 'menuRestoreCode', '文言が優先される');
+}
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

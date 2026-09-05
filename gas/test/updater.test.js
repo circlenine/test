@@ -1005,10 +1005,10 @@ F('panelWatch')();
 t(true, '結合の中でも落ちない');
 
 console.log('\n■ バージョン');
-t(vm.runInContext('UPD_VERSION', ctx) === 'U004ver', 'U004ver になっている');
+t(vm.runInContext('UPD_VERSION', ctx) === 'U005ver', 'U005ver になっている');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuUpdateStatus')();
-has(alerts[0].b, 'U004ver', '状態画面にバージョンが出る');
+has(alerts[0].b, 'U005ver', '状態画面にバージョンが出る');
 
 console.log('\n■ 番号でも見分けられる（文言を書き換えてしまったとき用）');
 {
@@ -1068,6 +1068,76 @@ t(idsBefore === idsAfter, 'デプロイを作り直さず、同じものの版�
 t(project.deployments.length === 2, '数も増えない');
 t(apiCalls.filter(c => c.path === '/deployments' && c.method === 'post').length === 0,
   '新しいデプロイは作らない（作るとURLが変わってしまう）');
+
+console.log('\n■ 推定残り時間を出す');
+{
+  const S = F('updSecText_');
+  t(S(25) === '約25秒', '秒だけ');
+  t(S(90) === '約1分30秒', '分と秒');
+  t(S(120) === '約2分', 'ちょうど何分ならそれだけ');
+  t(S(0.4) === '約1秒', '0秒とは言わない');
+  const items = F('panelItems_')();
+  t(items.every(x => x.sec > 0), '6つとも見込み時間を持っている');
+}
+
+console.log('\n■ 押したら、まず空にしてから「実行中（推定〇〇）」を出す');
+gapLayout();
+panel._cells['48,2'] = '前に動かしたときの結果が残っている';
+const says = [];
+vm.runInContext('formatRan = 0;', ctx);
+// 実行中の表示を捕まえるため、整形の中で結果らんを覗く
+vm.runInContext(
+  'function menuFormatAll(){ formatRan++; ' +
+  '  says.push(String(SpreadsheetApp.getActiveSpreadsheet()' +
+  '    .getSheetByName("説明").getRange(48,2).getValue())); }', ctx);
+ctx.says = says;
+panel._cells['40,2'] = true;
+F('panelWatch')();
+t(says.length === 1, '実行中に1回のぞけた');
+has(says[0], '実行中', '動かしている間は「実行中」と出る');
+has(says[0], '推定 約2分30秒', '推定時間も出る');
+t(says[0].indexOf('前に動かしたときの結果') === -1, '前の結果は消えている');
+has(panel._cells['48,2'], '終わりました', '終わったら結果が出る');
+has(panel._cells['48,2'], '約', 'かかった時間も出る');
+
+console.log('\n■ 終わらないまま止まったら、見張りが知らせる');
+gapLayout();
+props['PANEL_RUNNING'] = JSON.stringify(
+  { row: 38, label: '[2] 更新できる状態か調べる', sec: 25,
+    at: Date.now() - 200 * 1000 });          // 200秒前から動きっぱなし
+F('panelWatch')();
+has(panel._cells['48,2'], '終わりませんでした', '止まったと知らせる');
+has(panel._cells['48,2'], '[2] 更新できる状態か調べる', 'どれが止まったか出る');
+has(panel._cells['48,2'], '承認がまだ済んでいない', 'いちばん多い原因を出す');
+has(panel._cells['48,2'], '承認画面', '直し方も出る');
+t(props['PANEL_RUNNING'] === undefined, '記録は消す（毎分ずっと出続けないように）');
+
+console.log('\n■ まだ動いている見込みのうちは、邪魔しない');
+gapLayout();
+props['PANEL_RUNNING'] = JSON.stringify(
+  { row: 38, label: '[2] 更新できる状態か調べる', sec: 25, at: Date.now() - 10 * 1000 });
+panel._cells['36,2'] = true;                 // 別のボタンにチェックが入っていても
+vm.runInContext('formatRan = 0;', ctx);
+F('panelWatch')();
+t(lastPut() === undefined, '新しいものを勝手に動かさない');
+t(panel._cells['36,2'] === true, 'チェックもそのまま（あとで拾える）');
+t(props['PANEL_RUNNING'] !== undefined, '記録も残す');
+
+console.log('\n■ 終わったら記録は消える');
+gapLayout();
+vm.runInContext('function menuFormatAll(){ formatRan++; }', ctx);
+panel._cells['40,2'] = true;
+F('panelWatch')();
+t(props['PANEL_RUNNING'] === undefined, '終わったら記録は残らない');
+
+console.log('\n■ 途中で失敗しても記録は消える');
+gapLayout();
+vm.runInContext('function menuFormatAll(){ throw new Error("わざと失敗"); }', ctx);
+panel._cells['40,2'] = true;
+F('panelWatch')();
+t(props['PANEL_RUNNING'] === undefined, '失敗しても残らない');
+has(panel._cells['48,2'], 'わざと失敗', '理由が出る');
+vm.runInContext('function menuFormatAll(){ formatRan++; }', ctx);
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

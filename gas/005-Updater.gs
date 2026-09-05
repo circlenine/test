@@ -2,7 +2,17 @@
  * ================================================================
  *  コードの自動更新（005-Updater.gs）
  *
- *  ★★★  U004ver  （2026/09/06）  ★★★
+ *  ★★★  U005ver  （2026/09/06）  ★★★
+ *
+ *  [U005ver]
+ *   ・チェックを押したときに「推定 約〇秒」を必ず出すようにした
+ *     何も出ないと、いつ終わるのか分からないため
+ *   ・「コードを更新する」は、途中の段階も出す（読み込み中／保存中／書き込み中…）
+ *   ・終わらないまま止まったときに、それが分かるようにした
+ *     1分おきの見張りが、動きっぱなしのものを見つけて
+ *     「終わりませんでした」と理由の候補を出す
+ *   ・押したときに、まず結果らんを空にしてから始めるようにした
+ *     前の結果が残っていると、今のものか前のものか分からなくなるため
  *
  *  [U004ver]
  *   ・「前のコードに戻す」でも、デプロイをやり直すようにした
@@ -64,7 +74,7 @@
  * ================================================================
  */
 
-const UPD_VERSION = "U004ver";
+const UPD_VERSION = "U005ver";
 
 /** ドライブ上の置き場所（GitHubを使わないときの読み元） */
 const UPD_FOLDER  = "taxi-gas";
@@ -200,6 +210,7 @@ function menuUpdateCode() {
     ? "GitHub（" + updRepo_() + " / " + updBranch_() + " / " + updPath_() + "）"
     : "ドライブ（" + UPD_FOLDER + "）";
 
+  updProgress_("新しいコードを読み込んでいます…", 80);
   let neu;
   try {
     neu = updReadNew_();
@@ -247,6 +258,7 @@ function menuUpdateCode() {
     if (a !== ui.Button.YES) return;
   }
 
+  updProgress_("いまのコードを保存しています…", 70);
   ss.toast("いまのコードを保存しています…", "🔄 更新中", 60);
 
   // ① まず今の中身を保存する。戻せないまま壊すのがいちばん困る
@@ -269,6 +281,7 @@ function menuUpdateCode() {
     if (!byName[f.name]) merged.push(f);
   });
 
+  updProgress_("コードを書き込んでいます…", 45);
   ss.toast("コードを書き込んでいます…", "🔄 更新中", 60);
   try {
     updPutProject_(merged);
@@ -278,6 +291,7 @@ function menuUpdateCode() {
   }
 
   // ③ ウェブアプリのデプロイもやり直す
+  updProgress_("デプロイをやり直しています…", 25);
   let dep = "";
   try {
     dep = updRedeploy_();
@@ -600,18 +614,32 @@ const PANEL_SCAN      = 300;  // 見出しをどこまで探すか（行）
 function panelItems_() {
   return [
     { key: "コードを更新",         label: "[1] コードを更新する",        fn: "menuUpdateCode",
+      sec: 90,
       note: "GitHubの新しいコードを取り込み、デプロイもやり直します" },
     { key: "更新できる状態",       label: "[2] 更新できる状態か調べる",  fn: "menuUpdateStatus",
+      sec: 25,
       note: "APIが使えるか、どこから読むかを見ます" },
     { key: "全タブをまとめて整形", label: "[3] 全タブをまとめて整形する", fn: "menuFormatAll",
+      sec: 150,
       note: "並び順・色・行の高さを整えます" },
     { key: "前のコードに戻す",     label: "[4] 前のコードに戻す",        fn: "menuRestoreCode",
+      sec: 70,
       note: "更新で壊れたとき用。直前の状態に戻します" },
     { key: "URLをLINE",            label: "[5] ページのURLをLINEに送る", fn: "menuWebAppSendLine",
+      sec: 20,
       note: "グループLINEにリンクを送ります" },
     { key: "開けるか調べる",       label: "[6] ページが開けるか調べる",  fn: "menuWebAppCheck",
+      sec: 30,
       note: "みんなの記録ページが本当に開けるか、実際に試します" }
   ];
+}
+
+/** 「約1分30秒」のような、読みやすい形にする */
+function updSecText_(sec) {
+  const n = Math.max(1, Math.round(sec));
+  if (n < 60) return "約" + n + "秒";
+  const m = Math.floor(n / 60), r = n % 60;
+  return "約" + m + "分" + (r ? r + "秒" : "");
 }
 
 /** その機能がどのファイルに入っているか（入っていないときの案内用） */
@@ -1083,6 +1111,10 @@ function panelWatch() {
   try {
     const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(PANEL_TAB);
     if (!sh) return;
+
+    // 動きっぱなしになっていないか、先に見る
+    if (panelCheckStuck_(sh)) return;
+
     const rows = panelReadRows_(sh);
     for (let i = 0; i < rows.length; i++) {
       if (rows[i].value === true) { panelRun_(rows[i].row); return; }   // 1回に1つだけ
@@ -1119,6 +1151,9 @@ function panelRun_(row) {
     // 見張りが同じものをもう一度動かしてしまう
     sh.getRange(row, chk).setValue(false);
 
+    // 前の結果が残っていると、今のものか前のものか分からなくなる。まず空にする
+    panelClear_(sh);
+
     if (!item) {
       panelSay_(sh, "⚠️ この行が何をするボタンか分かりません：「" +
         String(text).slice(0, 30) + "」\n" +
@@ -1133,20 +1168,110 @@ function panelRun_(row) {
       return;
     }
 
-    panelSay_(sh, "⏳ " + item.label + " を実行中…");
+    panelMarkStart_(row, item);
+    const t0 = new Date().getTime();
+    panelSay_(sh, "⏳ " + item.label + " を実行中…（推定 " +
+      updSecText_(item.sec || 60) + "）");
+
     let out = "";
     try {
       const fn = eval(item.fn);
       fn();
-      out = "✅ " + item.label + " が終わりました";
+      const took = Math.round((new Date().getTime() - t0) / 1000);
+      out = "✅ " + item.label + " が終わりました（" + updSecText_(took) + "）";
     } catch (err) {
       logErr_("panel:" + item.fn, err);
       out = "❌ " + item.label + " に失敗しました\n" + (err && err.message ? err.message : err);
     }
+    panelMarkEnd_();
     panelSay_(sh, out);
   } finally {
+    panelMarkEnd_();
     try { lock.releaseLock(); } catch (e) {}
   }
+}
+
+/** 結果らんを空にする */
+function panelClear_(sh) {
+  if (!sh) return;
+  try {
+    const cell = panelResultCell_(sh);
+    if (!cell) return;
+    let rg = sh.getRange(cell.row, cell.col);
+    try {
+      if (rg.isPartOfMerge()) {
+        const m = rg.getMergedRanges();
+        if (m && m.length) rg = m[0].getCell(1, 1);
+      }
+    } catch (e) {}
+    rg.setValue("");
+    SpreadsheetApp.flush();
+  } catch (e) {}
+}
+
+/**
+ * いま動いているものを覚えておく／消す。
+ * 1分おきの見張りが「動きっぱなしになっていないか」を見るために使う。
+ */
+function panelMarkStart_(row, item) {
+  try {
+    PropertiesService.getScriptProperties().setProperty("PANEL_RUNNING",
+      JSON.stringify({ row: row, label: item.label, sec: item.sec || 60,
+                       at: new Date().getTime() }));
+  } catch (e) {}
+}
+function panelMarkEnd_() {
+  try { PropertiesService.getScriptProperties().deleteProperty("PANEL_RUNNING"); }
+  catch (e) {}
+}
+function panelMarkGet_() {
+  try {
+    const v = PropertiesService.getScriptProperties().getProperty("PANEL_RUNNING");
+    return v ? JSON.parse(v) : null;
+  } catch (e) { return null; }
+}
+
+/**
+ * 途中経過を出す。長くかかるものは、いま何をしているかが見えたほうがよい。
+ * パネルから動かしているときだけ書く。
+ */
+function updProgress_(text, restSec) {
+  try {
+    if (!panelMarkGet_()) return;
+    const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(PANEL_TAB);
+    if (!sh) return;
+    panelSay_(sh, "⏳ " + text +
+      (restSec ? "（のこり " + updSecText_(restSec) + "）" : ""));
+  } catch (e) {}
+}
+
+/**
+ * 動きっぱなしになっていないか見る。
+ *
+ * 途中で止まると（承認が済んでいない／通信が切れた など）、
+ * 「実行中…」のまま何も起きなくなる。それがいちばん困るので、
+ * 見込みの3倍たっても終わっていなければ、止まったものとみなして知らせる。
+ * 戻り値 true なら、今回はここまで（新しいものは動かさない）。
+ */
+function panelCheckStuck_(sh) {
+  const m = panelMarkGet_();
+  if (!m) return false;
+
+  const passed = Math.round((new Date().getTime() - (m.at || 0)) / 1000);
+  const limit = Math.min(Math.max((m.sec || 60) * 3, 90), 420);
+  if (passed < limit) return true;      // まだ動いている見込み。邪魔しない
+
+  panelMarkEnd_();
+  panelSay_(sh,
+    "❌ " + (m.label || "さっきのもの") + " が終わりませんでした（" +
+    updSecText_(passed) + "たっても返事がありません）\n" +
+    "考えられること：\n" +
+    "　・承認がまだ済んでいない\n" +
+    "　　→ パソコンかブラウザでスプシを開き、メニューから同じものを1回動かして、\n" +
+    "　　　承認画面を通してください（スマホのアプリからは承認できません）\n" +
+    "　・通信が途中で切れた → もう一度チェックしてみてください\n" +
+    "　・時間がかかりすぎた → タブの行数が多いと、整形は数分かかることがあります");
+  return true;
 }
 
 /**

@@ -96,16 +96,28 @@ const errs = [];
 let panel;
 function mkPanel() {
   const cells = {};
+  const sizes = {};
   const prot = [];
   let protFails = false;
   return {
     _cells: cells,
+    _sizes: sizes,
     _prot: prot,
     _failProtect: v => { protFails = v; },
     getProtections: () => prot.slice(),
 
     getName: () => '説明',
     getMaxRows: () => 200,
+    insertRowsBefore: (before, n) => {
+      const moved = {};
+      Object.keys(cells).forEach(k => {
+        const m = k.match(/^(\d+),(\d+)$/);
+        if (!m) return;
+        const r = +m[1];
+        if (r >= before) { moved[(r + n) + ',' + m[2]] = cells[k]; delete cells[k]; }
+      });
+      Object.keys(moved).forEach(k => { cells[k] = moved[k]; });
+    },
     // 行を足す＝その下の行がぜんぶ1つずつ下がる（本物と同じ動き）
     insertRowsAfter: (after, n) => {
       const moved = {};
@@ -121,8 +133,10 @@ function mkPanel() {
       matchEntireCell: () => ({
         findNext: () => {
           for (let r = 1; r <= 200; r++) {
-            if (String(cells[r + ',2'] || '').indexOf(q) !== -1) {
-              return { getRow: () => r };
+            for (let c = 1; c <= 8; c++) {
+              if (String(cells[r + ',' + c] || '').indexOf(q) !== -1) {
+                return { getRow: () => r };
+              }
             }
           }
           return null;
@@ -143,11 +157,15 @@ function mkPanel() {
       }
       let px;
       const R = {
-        getA1Notation: () => 'A' + r + ':A' + (r + (nr || 1) - 1),
+        getA1Notation: () => {
+          const L = 'ABCDEFGH'.charAt(c - 1);
+          return L + r + ':' + L + (r + (nr || 1) - 1);
+        },
         protect: () => {
           if (protFails) throw new Error('保護できません');
           const p = {
-            _a1: 'A' + r + ':A' + (r + (nr || 1) - 1),
+            _a1: 'ABCDEFGH'.charAt(c - 1) + r + ':' +
+                 'ABCDEFGH'.charAt(c - 1) + (r + (nr || 1) - 1),
             _editors: ['tomodachi@example.com', 'stranger@example.com'],
             _domain: true,
             setDescription() { return p; },
@@ -174,6 +192,10 @@ function mkPanel() {
           for (let i = 0; i < (nr || 1); i++) {
             for (let j = 0; j < (nc || 1); j++) delete cells[(r + i) + ',' + (c + j)];
           }
+          return px;
+        },
+        setFontSize: v => {
+          for (let i = 0; i < (nr || 1); i++) sizes[(r + i) + ',' + c] = v;
           return px;
         },
         setValue: v => { cells[r + ',' + c] = v; return px; },
@@ -490,8 +512,8 @@ t(JSON.stringify(panel._cells).indexOf('github_pat_himitsu') === -1, 'シート�
 console.log('\n■ そうさタブ（スマホアプリ用のボタン）');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
-t(String(panel._cells['8,2']) === '▼ チェックを入れると動きます（終わると自動で外れます）',
-  '説明タブの8行目に見出しが入る');
+t(String(panel._cells['8,3']) === '▼ チェックを入れると動きます（終わると自動で外れます）',
+  '説明タブの8行目に見出しが入る（C列）');
 let items = F('panelItems_')();
 // このテストでは 005-Updater しか読み込んでいないので、
 // 004-WebApp や 001-Code の機能は出てこないのが正しい
@@ -522,30 +544,30 @@ console.log('\n■ チェックすると動く');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
 const TOP = 9;   // はじめて置いたときは 8行目が見出し、9行目からボタン
-panel._cells[TOP + ',1'] = true;                       // 1行目＝コードを更新する
-F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 1,
+panel._cells[TOP + ',2'] = true;                       // 1行目＝コードを更新する
+F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 2,
                             getRow: () => TOP }, value: 'TRUE' });
-t(panel._cells[TOP + ',1'] === false, '終わったらチェックが外れる');
+t(panel._cells[TOP + ',2'] === false, '終わったらチェックが外れる');
 t(lastPut() !== undefined, '更新が実際に走った');
 const resRow = TOP + F('panelItems_')().length + 2;
-has(panel._cells[resRow + ',2'], '✅', '結果らんに出る');
-has(panel._cells[resRow + ',2'], 'コードを更新する', 'どれを動かしたか分かる');
+has(panel._cells[resRow + ',3'], '✅', '結果らんに出る');
+has(panel._cells[resRow + ',3'], 'コードを更新する', 'どれを動かしたか分かる');
 
 console.log('\n■ チェックを外したときは動かない');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
-F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 1,
+F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 2,
                             getRow: () => TOP }, value: 'FALSE' });
 t(lastPut() === undefined, '外したときは何もしない');
 
 console.log('\n■ 関係ない場所を触っても動かない');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
-F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 2,
+F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 3,
                             getRow: () => TOP }, value: 'TRUE' });
-t(lastPut() === undefined, 'B列を触っても動かない');
+t(lastPut() === undefined, 'チェック以外の列を触っても動かない');
 F('panelOnEdit')({ range: { getSheet: () => ({ getName: () => 'ﾀﾞｲｽｹ' }),
-                            getColumn: () => 1, getRow: () => TOP }, value: 'TRUE' });
+                            getColumn: () => 2, getRow: () => TOP }, value: 'TRUE' });
 t(lastPut() === undefined, '別のタブなら動かない');
 F('panelOnEdit')({});
 F('panelOnEdit')(null);
@@ -554,10 +576,10 @@ t(errs.length === 0, '変な呼ばれ方をしても落ちない');
 console.log('\n■ 1分おきの見張りでも動く（アプリでonEditが効かないとき用）');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
-panel._cells[TOP + ',1'] = true;
+panel._cells[TOP + ',2'] = true;
 F('panelWatch')();
 t(lastPut() !== undefined, '見張りが拾って動かす');
-t(panel._cells[TOP + ',1'] === false, 'チェックも外れる');
+t(panel._cells[TOP + ',2'] === false, 'チェックも外れる');
 
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
@@ -567,19 +589,19 @@ t(lastPut() === undefined, 'チェックが無ければ何もしない');
 console.log('\n■ 二重に動かない');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
-panel._cells[TOP + ',1'] = true;
+panel._cells[TOP + ',2'] = true;
 lockFree = false;                                   // すでに誰かが動かしている
 F('panelWatch')();
 t(lastPut() === undefined, '鍵が取れなければ動かさない');
-t(panel._cells[TOP + ',1'] === true, 'チェックも外さない（あとで拾えるように）');
+t(panel._cells[TOP + ',2'] === true, 'チェックも外さない（あとで拾えるように）');
 
 console.log('\n■ 失敗しても結果が残る');
 reset([]);                                          // ドライブに何も無い状態
 F('menuMakePanel')();
-panel._cells[TOP + ',1'] = true;
+panel._cells[TOP + ',2'] = true;
 F('panelWatch')();
-t(panel._cells[TOP + ',1'] === false, 'チェックは外れる（押しっぱなしにならない）');
-has(panel._cells[resRow + ',2'], '✅', '処理自体は最後まで通る');
+t(panel._cells[TOP + ',2'] === false, 'チェックは外れる（押しっぱなしにならない）');
+has(panel._cells[resRow + ',3'], '✅', '処理自体は最後まで通る');
 
 console.log('\n■ 8行目より上は絶対に触らない');
 reset([['001-Code.gs', 'あたらしい']]);
@@ -596,26 +618,27 @@ t(panel._cells['6,1'] === '6行目のなにか', '6行目はそのまま');
 t(panel._cells['Z1'] === 'Cgroup123', 'Z1（グループID）はそのまま');
 t(panel._cells['Z2'] === 'dashboardId', 'Z2（ダッシュボード）はそのまま');
 t(panel._cells['7,1'] === undefined, '7行目は空のまま');
-t(String(panel._cells['8,2']).indexOf('チェックを入れると') !== -1, '8行目に見出し');
-t(String(panel._cells['9,2']).indexOf('コードを更新') !== -1, '9行目から1つめのボタン');
+t(String(panel._cells['8,3']).indexOf('チェックを入れると') !== -1, '8行目に見出し');
+t(String(panel._cells['9,3']).indexOf('コードを更新') !== -1, '9行目から1つめのボタン');
 
-console.log('\n■ 置き場所に何か入っていたら、上書きせずに止める');
+console.log('\n■ 行を差し込むので、もともとの中身は消えない');
 reset([['001-Code.gs', 'あたらしい']]);
-panel._cells['10,2'] = '消されたら困るもの';
+panel._cells['8,2'] = 'もともと8行目にあったもの';
+panel._cells['9,3'] = 'もともと9行目にあったもの';
 F('menuMakePanel')();
-t(panel._cells['10,2'] === '消されたら困るもの', '中身を消していない');
-t(panel._cells['8,2'] === undefined, '見出しも書いていない（何も書かずに止めた）');
-has(alerts[alerts.length - 1].t, '置けませんでした', 'そう伝える');
-has(alerts[alerts.length - 1].b, '10行目', 'どこに何があったか教える');
-has(alerts[alerts.length - 1].b, '消されたら困るもの', '中身も見せる');
-t(triggers.length === 0, '止めたときはトリガーも作らない');
+// 8行目から10行差し込まれるので、元の中身は下へ move している
+const still = Object.keys(panel._cells).map(k => panel._cells[k]);
+t(still.indexOf('もともと8行目にあったもの') !== -1, '8行目にあったものは残っている');
+t(still.indexOf('もともと9行目にあったもの') !== -1, '9行目にあったものは残っている');
+has(alerts[alerts.length - 1].t, 'ボタンを置きました', '止まらずに置ける');
+has(alerts[alerts.length - 1].b, '何も消していません', 'そう伝える');
 
 console.log('\n■ 2回目は「もう置いてある」として、並べ直さない');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
-const firstHead = panel._cells['8,2'];
+const firstHead = panel._cells['8,3'];
 F('menuMakePanel')();
-t(panel._cells['8,2'] === firstHead, '見出しはそのまま');
+t(panel._cells['8,3'] === firstHead, '見出しはそのまま');
 has(alerts[alerts.length - 1].t, 'もう置いてあります', '置き直さないと伝える');
 
 console.log('\n■ 説明タブを clear しない');
@@ -628,7 +651,7 @@ console.log('\n■ チェックのらんだけを自分だけが押せるよう�
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
 t(panel._prot.length === 1, '保護がかかる');
-t(panel._prot[0]._a1 === 'A9:A14', 'チェックのらんだけを守る（説明タブ全体ではない）');
+t(panel._prot[0]._a1 === 'B9:B14', 'チェックのらん（B列）だけを守る');
 t(panel._prot[0]._editors.length === 0, 'ほかの編集者は外される（＝自分だけ）');
 t(panel._prot[0]._domain === false, '同じドメインの人もまとめて外す');
 has(alerts[alerts.length - 1].b, 'あなただけが触れるように', 'そう伝える');
@@ -667,16 +690,16 @@ t(F('panelTop_')(panel) === 36, 'ボタンの位置も追いつく');
 t(props['PANEL_ROW'] === '35', '新しい場所を覚え直す');
 
 console.log('\n■ 動かした先でもチェックが効く');
-panel._cells['36,1'] = true;                 // 引っ越し先の1つめ
+panel._cells['36,2'] = true;                 // 引っ越し先の1つめ
 F('panelWatch')();
 t(lastPut() !== undefined, '見張りが拾って動かす');
-t(panel._cells['36,1'] === false, 'チェックも外れる');
-has(panel._cells[F('panelResultRow_')(panel) + ',2'], '✅', '結果も正しい行に出る');
+t(panel._cells['36,2'] === false, 'チェックも外れる');
+has(panel._cells[F('panelResultRow_')(panel) + ',3'], '✅', '結果も正しい行に出る');
 
-F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 1,
+F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 2,
                             getRow: () => 36 }, value: 'TRUE' });
-t(panel._cells['36,1'] === false, 'onEdit でも効く');
-F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 1,
+t(panel._cells['36,2'] === false, 'onEdit でも効く');
+F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 2,
                             getRow: () => 9 }, value: 'TRUE' });
 t(true, '引っ越し前の行を触っても、何も起きない（例外にならない）');
 
@@ -684,12 +707,12 @@ console.log('\n■ もう置いてあるときは、並べ直さない');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
 // 見た目を自分で整えたことにする
-panel._cells['9,2'] = '🔄 コードを更新する（じぶんで書き換えた）';
-panel._cells['8,2'] = '▼ チェックを入れると動きます（じぶんで書き換えた）';
+panel._cells['9,3'] = '🔄 コードを更新する（じぶんで書き換えた）';
+panel._cells['8,3'] = '▼ チェックを入れると動きます（じぶんで書き換えた）';
 F('menuMakePanel')();
-t(panel._cells['9,2'] === '🔄 コードを更新する（じぶんで書き換えた）',
+t(panel._cells['9,3'] === '🔄 コードを更新する（じぶんで書き換えた）',
   'ラベルを書き換えない');
-t(panel._cells['8,2'] === '▼ チェックを入れると動きます（じぶんで書き換えた）',
+t(panel._cells['8,3'] === '▼ チェックを入れると動きます（じぶんで書き換えた）',
   '見出しも書き換えない');
 has(alerts[alerts.length - 1].t, 'もう置いてあります', 'そう伝える');
 has(alerts[alerts.length - 1].b, '並びはそのまま', '触っていないと伝える');
@@ -722,11 +745,11 @@ t(F('panelTop_')(panel) === 10, 'ボタンの位置も追いつく');
 // 何回も足す
 panel.insertRowsAfter(2, 5);
 t(F('panelHeadRow_')(panel) === 14, '5行足しても追いつく');
-panel._cells['15,1'] = true;                        // 1つめのボタン
+panel._cells['15,2'] = true;                        // 1つめのボタン
 F('panelWatch')();
 t(lastPut() !== undefined, 'ずれた先でもチェックが効く');
-t(panel._cells['15,1'] === false, 'チェックも外れる');
-has(panel._cells[F('panelResultRow_')(panel) + ',2'], '✅', '結果も正しい行に出る');
+t(panel._cells['15,2'] === false, 'チェックも外れる');
+has(panel._cells[F('panelResultRow_')(panel) + ',3'], '✅', '結果も正しい行に出る');
 
 console.log('\n■ 遠くまで行っても見つける');
 reset([['001-Code.gs', 'あたらしい']]);
@@ -738,15 +761,15 @@ console.log('\n■ 足りないボタンだけ足す');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
 // 4つしか無かった昔の状態を作る（5つめ6つめを消す）
-delete panel._cells['13,1']; delete panel._cells['13,2']; delete panel._cells['13,3'];
-delete panel._cells['14,1']; delete panel._cells['14,2']; delete panel._cells['14,3'];
-panel._cells['9,2'] = '🔄 コードを更新する（じぶんで整えた）';
+delete panel._cells['13,2']; delete panel._cells['13,3']; delete panel._cells['13,4'];
+delete panel._cells['14,2']; delete panel._cells['14,3']; delete panel._cells['14,4'];
+panel._cells['9,3'] = '🔄 コードを更新する（じぶんで整えた）';
 F('menuMakePanel')();
-t(panel._cells['9,2'] === '🔄 コードを更新する（じぶんで整えた）',
+t(panel._cells['9,3'] === '🔄 コードを更新する（じぶんで整えた）',
   'すでにあるボタンの文言は書き換えない');
-t(String(panel._cells['13,2']).indexOf('全タブ') !== -1, '5つめが足された');
-t(String(panel._cells['14,2']).indexOf('前のコードに戻す') !== -1, '6つめが足された');
-t(panel._cells['13,1'] === false, '足した行にチェックボックスが付く');
+t(String(panel._cells['13,3']).indexOf('全タブ') !== -1, '5つめが足された');
+t(String(panel._cells['14,3']).indexOf('前のコードに戻す') !== -1, '6つめが足された');
+t(panel._cells['13,2'] === false, '足した行にチェックボックスが付く');
 has(alerts[alerts.length - 1].b, '2個のボタンを足しました', '何個足したか伝える');
 
 console.log('\n■ そろっていれば何も足さない');
@@ -762,12 +785,41 @@ has(alerts[alerts.length - 1].b, '並びはそのまま', 'そう伝える');
 console.log('\n■ 入れていない機能を押したとき');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
-panel._cells['11,1'] = true;          // 3つめ＝ページのURLをLINEに送る（004-WebApp）
+panel._cells['11,2'] = true;          // 3つめ＝ページのURLをLINEに送る（004-WebApp）
 F('panelWatch')();
-t(panel._cells['11,1'] === false, 'チェックは外れる');
-has(panel._cells[F('panelResultRow_')(panel) + ',2'], 'まだ使えません', 'そう出る');
-has(panel._cells[F('panelResultRow_')(panel) + ',2'], '004-WebApp', 'どれを入れればいいか出る');
+t(panel._cells['11,2'] === false, 'チェックは外れる');
+has(panel._cells[F('panelResultRow_')(panel) + ',3'], 'まだ使えません', 'そう出る');
+has(panel._cells[F('panelResultRow_')(panel) + ',3'], '004-WebApp', 'どれを入れればいいか出る');
 t(lastPut() === undefined, '何も実行されない');
+
+console.log('\n■ チェックは大きく（スマホで押しやすいように）');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+t(panel._sizes['9,2'] === 50, '1つめのチェックが文字サイズ50');
+t(panel._sizes['14,2'] === 50, '6つめのチェックも同じ');
+t(panel._sizes['9,3'] === 12, 'ラベルは普通の大きさのまま');
+
+console.log('\n■ チェックの列は決め打ちにしない');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+t(F('panelChkCol_')(panel, 9) === 2, 'はじめて置いたときはB列');
+// 昔の形（A列にチェック）を作る
+reset([['001-Code.gs', 'あたらしい']]);
+panel._cells['35,2'] = '▼ チェックを入れると動きます（終わると自動で外れます）';
+for (let i = 0; i < 6; i++) {
+  panel._cells[(36 + i) + ',1'] = false;                       // A列にチェック
+  panel._cells[(36 + i) + ',2'] = ['🔄 コードを更新する','🔧 更新できる状態か調べる',
+    '💬 ページのURLをLINEに送る','🩺 ページが開けるか調べる',
+    '🧹 全タブをまとめて整形する','⏪ 前のコードに戻す'][i];
+}
+t(F('panelHeadRow_')(panel) === 35, '見出しを見つける');
+t(F('panelChkCol_')(panel, 36) === 1, 'A列のチェックも見つける');
+panel._cells['36,1'] = true;
+F('panelWatch')();
+t(lastPut() !== undefined, 'A列でもチェックが効く');
+t(panel._cells['36,1'] === false, 'A列のチェックが外れる');
+has(panel._cells[F('panelResultRow_')(panel) + ',2'],
+    '✅', '結果はチェックのすぐ右の列（B）に出る');
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

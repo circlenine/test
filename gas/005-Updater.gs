@@ -539,6 +539,9 @@ function updRedeploy_() {
  */
 const PANEL_TAB       = "説明";
 const PANEL_FIRST_ROW = 8;    // まだ置いていないときに、はじめて置く行
+const PANEL_CHK_COL   = 2;    // はじめて置くときのチェックの列（B。A列は余白として使っている）
+const PANEL_CHK_SIZE  = 50;   // チェックの大きさ（スマホで押しやすいように）
+const PANEL_CHK_H     = 70;   // チェックの行の高さ
 const PANEL_HEAD      = "▼ チェックを入れると動きます（終わると自動で外れます）";
 // 見出しを探すときの手がかり。文言を少し直しても見つけられるようにしておく
 const PANEL_MARK      = "チェックを入れると動きます";
@@ -609,13 +612,15 @@ function panelHeadRow_(sh) {
       return row;
     }
   } catch (e) {
-    // 古い環境などで使えないときは、B列を順に見ていく
+    // 古い環境などで使えないときは、A〜F列を順に見ていく
     const last = Math.min(sh.getMaxRows(), PANEL_SCAN);
-    const col = sh.getRange(1, 2, last, 1).getValues();
-    for (let i = 0; i < col.length; i++) {
-      if (String(col[i][0]).indexOf(PANEL_MARK) !== -1) {
-        pr.setProperty("PANEL_ROW", String(i + 1));
-        return i + 1;
+    const grid = sh.getRange(1, 1, last, 6).getValues();
+    for (let i = 0; i < grid.length; i++) {
+      for (let c = 0; c < 6; c++) {
+        if (String(grid[i][c]).indexOf(PANEL_MARK) !== -1) {
+          pr.setProperty("PANEL_ROW", String(i + 1));
+          return i + 1;
+        }
       }
     }
   }
@@ -623,13 +628,39 @@ function panelHeadRow_(sh) {
   return 0;
 }
 
-/** その行が見出しか */
+/** その行が見出しか（列は決め打ちにしない。A〜F のどこかにあればよい） */
 function panelIsHead_(sh, row) {
   try {
     if (row < 1 || row > sh.getMaxRows()) return false;
-    return String(sh.getRange(row, 2).getValue()).indexOf(PANEL_MARK) !== -1;
+    const cols = sh.getRange(row, 1, 1, 6).getValues()[0];
+    for (let c = 0; c < cols.length; c++) {
+      if (String(cols[c]).indexOf(PANEL_MARK) !== -1) return true;
+    }
+    return false;
   } catch (e) { return false; }
 }
+
+/**
+ * チェックが入っている列を見つける。
+ *
+ * 列を決め打ちにしない。A列を余白に使っていたり、
+ * 見やすいように動かしたりしていても、そのまま動くようにするため。
+ * 見出しの次の行で、いちばん左にある true/false のセルを探す。
+ * 見つからなければ、はじめて置くときの列（B）を使う。
+ */
+function panelChkCol_(sh, top) {
+  try {
+    const row = sh.getRange(top, 1, 1, 6).getValues()[0];
+    for (let c = 0; c < row.length; c++) {
+      if (row[c] === true || row[c] === false) return c + 1;
+    }
+  } catch (e) {}
+  return PANEL_CHK_COL;
+}
+
+/** ラベルの列（チェックのすぐ右）／説明の列（そのまた右） */
+function panelLabelCol_(sh, top) { return panelChkCol_(sh, top) + 1; }
+function panelNoteCol_(sh, top)  { return panelChkCol_(sh, top) + 2; }
 
 /** ボタンが始まる行。まだ置いていなければ 0 */
 function panelTop_(sh) {
@@ -681,49 +712,35 @@ function menuMakePanel() {
   }
 
   // --- ここからは、はじめて置くとき ---
+  // 既にある行に書き込むのではなく、行そのものを新しく差し込む。
+  // こうすれば、もともと入っているものを消してしまう心配がない。
   const head = PANEL_FIRST_ROW;
   const need = panelRows_();
+  sh.insertRowsBefore(head, need);
 
-  if (sh.getMaxRows() < head + need) {
-    sh.insertRowsAfter(sh.getMaxRows(), head + need - sh.getMaxRows());
-  }
+  const chk   = PANEL_CHK_COL;
+  const label = chk + 1;
+  const note  = chk + 2;
 
-  // 置き場所に何か入っていたら、上書きせずに止める
-  const area = sh.getRange(head, 1, need, 3).getValues();
-  let dirty = "";
-  for (let r = 0; r < area.length && !dirty; r++) {
-    for (let c = 0; c < 3; c++) {
-      if (String(area[r][c]).trim() !== "") {
-        dirty = (head + r) + "行目 " + "ABC".charAt(c) + "列：" +
-                String(area[r][c]).slice(0, 30);
-        break;
-      }
-    }
-  }
-  if (dirty) {
-    return updTell_("⚠️ 置けませんでした（中身が入っています）",
-      head + "行目から下の A〜C 列に、すでに何か入っています。\n" +
-      "消してしまうといけないので、書き込みませんでした。\n\n" +
-      "見つかったもの → " + dirty + "\n\n" +
-      "その範囲を空けてから、もう一度実行してください。");
-  }
-
-  sh.getRange(head, 2).setValue(PANEL_HEAD).setFontWeight("bold").setFontSize(11);
+  sh.getRange(head, label).setValue(PANEL_HEAD).setFontWeight("bold").setFontSize(11);
 
   const top = head + 1;
-  if (items.length) {
-    const rows = items.map(function (x) { return ["", x.label, x.note]; });
-    sh.getRange(top, 1, items.length, 3).setValues(rows);
-    sh.getRange(top, 1, items.length, 1).insertCheckboxes();
-    sh.getRange(top, 2, items.length, 1).setFontWeight("bold").setFontSize(12);
-    sh.getRange(top, 3, items.length, 1).setFontSize(9).setFontColor("#5f6368");
-    sh.getRange(top, 1, items.length, 3).setVerticalAlignment("middle").setWrap(true);
-    try { sh.setRowHeights(top, items.length, 40); } catch (e) {}
+  for (let i = 0; i < items.length; i++) {
+    sh.getRange(top + i, label).setValue(items[i].label);
+    sh.getRange(top + i, note).setValue(items[i].note);
   }
+  // チェックは大きく。スマホの指でも押しやすいように
+  sh.getRange(top, chk, items.length, 1).insertCheckboxes()
+    .setFontSize(PANEL_CHK_SIZE)
+    .setHorizontalAlignment("center").setVerticalAlignment("middle");
+  sh.getRange(top, label, items.length, 1).setFontWeight("bold").setFontSize(12);
+  sh.getRange(top, note,  items.length, 1).setFontSize(9).setFontColor("#5f6368");
+  sh.getRange(top, label, items.length, 2).setVerticalAlignment("middle").setWrap(true);
+  try { sh.setRowHeights(top, items.length, PANEL_CHK_H); } catch (e) {}
 
   const rr = top + items.length + 2;
-  sh.getRange(rr - 1, 2).setValue("結果").setFontWeight("bold");
-  sh.getRange(rr, 2).setValue("（まだ何も動かしていません）")
+  sh.getRange(rr - 1, label).setValue("結果").setFontWeight("bold");
+  sh.getRange(rr, label).setValue("（まだ何も動かしていません）")
     .setFontSize(10).setVerticalAlignment("top").setWrap(true);
   try { sh.setRowHeight(rr, 120); } catch (e) {}
 
@@ -736,7 +753,8 @@ function menuMakePanel() {
     "スマホのスプレッドシートアプリからは、ここのチェックで動かせます。\n" +
     "（アプリではメニューが出ないため）\n\n" +
     "チェックを入れると動き、終わると自動でチェックが外れて、下に結果が出ます。\n" +
-    "見やすいように動かしたり、セルを結合したりしても大丈夫です。\n\n" +
+    "行は新しく差し込んだので、もともと入っていたものは何も消していません。\n" +
+    "見やすいように動かしたり、セルを結合したり、列を変えたりしても大丈夫です。\n\n" +
     (locked
       ? "🔒 チェックのらんは、あなただけが触れるように保護しました。"
       : "⚠️ 保護をかけられませんでした。\n" +
@@ -752,11 +770,15 @@ function panelSync_(sh, headRow) {
   const items = panelItems_();
   const top = headRow + 1;
 
-  // いま何個ぶん置いてあるか。A列がチェックボックス（true/false）の行を数える
+  const chk   = panelChkCol_(sh, top);
+  const label = chk + 1;
+  const note  = chk + 2;
+
+  // いま何個ぶん置いてあるか。チェックの列が true/false の行を数える
   let have = 0;
   const room = Math.min(items.length + 6, sh.getMaxRows() - top + 1);
   if (room > 0) {
-    const col = sh.getRange(top, 1, room, 1).getValues();
+    const col = sh.getRange(top, chk, room, 1).getValues();
     for (let i = 0; i < col.length; i++) {
       if (col[i][0] === true || col[i][0] === false) have++;
       else break;
@@ -769,11 +791,13 @@ function panelSync_(sh, headRow) {
   sh.insertRowsAfter(top + have - 1, add);
 
   for (let i = have; i < items.length; i++) {
-    const r = top + i;
-    sh.getRange(r, 2).setValue(items[i].label);
-    sh.getRange(r, 3).setValue(items[i].note);
+    sh.getRange(top + i, label).setValue(items[i].label);
+    sh.getRange(top + i, note).setValue(items[i].note);
   }
-  sh.getRange(top + have, 1, add, 1).insertCheckboxes();
+  sh.getRange(top + have, chk, add, 1).insertCheckboxes()
+    .setFontSize(PANEL_CHK_SIZE)
+    .setHorizontalAlignment("center").setVerticalAlignment("middle");
+  try { sh.setRowHeights(top + have, add, PANEL_CHK_H); } catch (e) {}
   return add;
 }
 
@@ -781,7 +805,7 @@ function panelSync_(sh, headRow) {
 function panelCheckRange_(sh) {
   const top = panelTop_(sh);
   if (!top) return null;
-  return sh.getRange(top, 1, Math.max(panelItems_().length, 1), 1);
+  return sh.getRange(top, panelChkCol_(sh, top), Math.max(panelItems_().length, 1), 1);
 }
 
 /**
@@ -858,12 +882,13 @@ function panelOnEdit(e) {
   try {
     if (!e || !e.range) return;
     if (e.range.getSheet().getName() !== PANEL_TAB) return;
-    if (e.range.getColumn() !== 1) return;
     if (String(e.value).toUpperCase() !== "TRUE") return;
     const sh = e.range.getSheet();
     const top = panelTop_(sh);
+    if (!top) return;
+    if (e.range.getColumn() !== panelChkCol_(sh, top)) return;
     const row = e.range.getRow();
-    if (!top || row < top || row >= top + panelItems_().length) return;
+    if (row < top || row >= top + panelItems_().length) return;
     panelRun_(row);
   } catch (err) { logErr_("panelOnEdit", err); }
 }
@@ -876,7 +901,7 @@ function panelWatch() {
     const n = panelItems_().length;
     const top = panelTop_(sh);
     if (!n || !top) return;
-    const vals = sh.getRange(top, 1, n, 1).getValues();
+    const vals = sh.getRange(top, panelChkCol_(sh, top), n, 1).getValues();
     for (let i = 0; i < n; i++) {
       if (vals[i][0] === true) { panelRun_(top + i); return; }   // 1回に1つだけ
     }
@@ -904,7 +929,7 @@ function panelRun_(row) {
   try {
     // 先にチェックを外す。ここで外しておかないと、
     // 見張りが同じものをもう一度動かしてしまう
-    if (sh) sh.getRange(row, 1).setValue(false);
+    sh.getRange(row, panelChkCol_(sh, top)).setValue(false);
 
     if (!panelHas_(item.fn)) {
       panelSay_(sh, "⚠️ " + item.label + " はまだ使えません（" +
@@ -933,9 +958,10 @@ function panelSay_(sh, text) {
   if (!sh) return;
   try {
     const rr = panelResultRow_(sh);
-    if (!rr) return;
+    const top = panelTop_(sh);
+    if (!rr || !top) return;
     const now = new Date();
-    sh.getRange(rr, 2).setValue(
+    sh.getRange(rr, panelLabelCol_(sh, top)).setValue(
       pad2_(now.getHours()) + ":" + pad2_(now.getMinutes()) + "  " + text);
     SpreadsheetApp.flush();
   } catch (e) {}

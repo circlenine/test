@@ -683,5 +683,19 @@ console.log('\n■ 「いつ動いたか」の表示');
   has(A(new CtxDate(Date.now() - 2 * 86400000).toISOString()), '2日前', '2日前');
 }
 
+console.log('\n■ 軽量モード');
+{
+  const L = () => F('cfgLight_')();
+  useSettings([]);                                   ok(L() === false, '既定は いいえ');
+  useSettings([cfgRow('軽量モード', 'はい')]);        ok(L() === true,  '「はい」で ON');
+  useSettings([cfgRow('軽量モード', 'ハイ')]);        ok(L() === true,  '「ハイ」でも ON');
+  useSettings([cfgRow('軽量モード', 'ON')]);          ok(L() === true,  '「ON」でも ON');
+  useSettings([cfgRow('軽量モード', '1')]);           ok(L() === true,  '「1」でも ON');
+  useSettings([cfgRow('軽量モード', 'いいえ')]);      ok(L() === false, '「いいえ」で OFF');
+  useSettings([cfgRow('軽量モード', 'そのうち')]);    ok(L() === false, '知らない言葉なら OFF');
+  useSettings([cfgRow('軽量モード', '')]);            ok(L() === false, '空欄なら OFF');
+  resetSheets(); vm.runInContext('_cfgCache = null; _cfgVal = {}', ctx);
+}
+
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

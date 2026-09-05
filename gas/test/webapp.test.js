@@ -1,0 +1,251 @@
+/**
+ * みんなの記録ページ（004-WebApp.gs）を検証する。
+ *   実行: node gas/test/webapp.test.js
+ *
+ * ・サーバー側（doGet / wbCollect_）は 001-Code.gs と一緒に vm で動かす
+ * ・ページ側は、簡単な偽DOMを用意して実際に描かせ、中身を確かめる
+ */
+const fs = require('fs'), path = require('path'), vm = require('vm');
+
+const ctx = { console };
+vm.createContext(ctx);
+const CtxDate = vm.runInContext('Date', ctx);
+
+/* ---- 偽のシート ---- */
+let TABS = {};
+function makeSheet(name, rows) {
+  return {
+    getName: () => name,
+    getLastRow: () => 3 + rows.length,
+    getMaxRows: () => 1000,
+    getRange: (r, c, nr, nc) => ({
+      getValues: () => rows.slice(r - 4, r - 4 + (nr || 1))
+                           .map(x => x.slice(c - 1, c - 1 + (nc || 1))),
+      setValues: () => {}, setValue: () => {}, getValue: () => ''
+    })
+  };
+}
+ctx.SpreadsheetApp = {
+  getActiveSpreadsheet: () => ({
+    getSheetByName: n => TABS[n] ? makeSheet(n, TABS[n]) : null,
+    toast: () => {}
+  }),
+  BorderStyle: { SOLID: 'SOLID' },
+  getUi: () => ({ alert: () => {}, ButtonSet: {} })
+};
+ctx.PropertiesService = { getScriptProperties: () => ({
+  getProperty: () => null, setProperty: () => {}, deleteProperty: () => {} })};
+ctx.CacheService = { getScriptCache: () => ({ get: () => null, put: () => {}, remove: () => {} })};
+ctx.LockService = { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) };
+ctx.UrlFetchApp = { fetch: () => ({ getResponseCode: () => 200, getContentText: () => '{}' }) };
+ctx.Utilities = { base64Encode: () => '', formatDate: d => String(d), sleep: () => {} };
+ctx.Session = { getScriptTimeZone: () => 'Asia/Tokyo' };
+ctx.ScriptApp = { getProjectTriggers: () => [], getService: () => ({ getUrl: () => '' }) };
+
+let captured = null;
+ctx.HtmlService = {
+  XFrameOptionsMode: { ALLOWALL: 'ALLOWALL' },
+  createHtmlOutput: h => { captured = h; return {
+    setTitle() { return this; }, addMetaTag() { return this; },
+    setXFrameOptionsMode() { return this; } }; }
+};
+
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '001-Code.gs'), 'utf8'), ctx,
+  { filename: '001-Code.gs' });
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', '004-WebApp.gs'), 'utf8'), ctx,
+  { filename: '004-WebApp.gs' });
+
+const F = n => vm.runInContext(n, ctx);
+const K = n => vm.runInContext(n, ctx);
+
+let ng = 0;
+function ok(c, l) { console.log((c ? '  ok   ' : '  NG   ') + l); if (!c) ng++; }
+function has(s, n, l) {
+  ok(String(s).indexOf(n) !== -1, l + (String(s).indexOf(n) !== -1 ? '' :
+     '  … 実際: ' + JSON.stringify(String(s).slice(0, 200))));
+}
+
+/* ---- テスト用の行を作る ---- */
+function row(who, y, m, d, time, money, place, other, wait, mark) {
+  const r = new Array(11).fill('');
+  r[K('C_SENDER') - 1] = who;
+  r[K('C_DATE')   - 1] = new CtxDate(y, m - 1, d, 12, 0, 0);
+  r[K('C_WAIT')   - 1] = wait == null ? '' : wait + '分';
+  r[K('C_TIME')   - 1] = time;
+  r[K('C_MONEY')  - 1] = money;
+  r[K('C_PLACE')  - 1] = place;
+  r[K('C_OTHER')  - 1] = other || '';
+  r[K('C_MARK')   - 1] = mark || '';
+  return r;
+}
+// きょうから見て「今期」に入る日を使う
+const TODAY = new Date();
+const Y = TODAY.getFullYear();
+const M = TODAY.getMonth() + 1;
+const D = Math.min(TODAY.getDate(), 28);
+
+function reset() {
+  TABS = {};
+  ['ﾀﾞｲｽｹ','ｼｭﾝ','ｶｲﾄ','ｱﾅﾙ','ﾏｰｸ','北7','北4','北他','ﾐﾅﾐ','ほか','関空','ﾊﾞﾗｼ','説明','設定']
+    .forEach(n => { TABS[n] = []; });
+  vm.runInContext('_cfgCache = null; _cfgVal = {}', ctx);
+}
+
+console.log('\n■ 個人タブ＝自社、それ以外の「ｵﾌﾟﾁｬ」行＝オプチャ');
+reset();
+const own1 = row('ﾀﾞｲｽｹ', Y, M, D, '23:10', 12000, '新地4', '', 20);
+TABS['ﾀﾞｲｽｹ'] = [own1];
+TABS['北4']   = [own1.slice(),                                   // 個人タブの写し
+                 row('ｵﾌﾟﾁｬ', Y, M, D, '01:30', 25000, '新地7')]; // オプチャ
+let dat = F('wbCollect_')(true);
+ok(dat.ok === true, '読み込めた');
+ok(dat.own.length === 1, '自社は1件（エリアタブの写しを数えない）');
+ok(dat.opu.length === 1, 'オプチャは1件');
+ok(dat.own[0].w === 'ﾀﾞｲｽｹ', '自社の行は本人の名前');
+ok(dat.opu[0].w === 'ｵﾌﾟﾁｬ', 'オプチャの行は「ｵﾌﾟﾁｬ」');
+ok(dat.own[0].wt === 20, '待ち時間が数字で入る');
+ok(dat.own[0].s === 23, '23:10 は 23枠');
+ok(dat.opu[0].s === 25, '01:30 は 25枠（17時起点）');
+
+console.log('\n■ 同じ内容が2つのタブにあっても二重に数えない');
+reset();
+const o2 = row('ｵﾌﾟﾁｬ', Y, M, D, '01:30', 25000, '新地7');
+TABS['北4'] = [o2];
+TABS['関空'] = [o2.slice()];      // 関空にも入る運用
+dat = F('wbCollect_')(true);
+ok(dat.opu.length === 1, '2タブに入っていても1件');
+
+console.log('\n■ 使えない行は落とす');
+reset();
+TABS['ﾀﾞｲｽｹ'] = [
+  row('ﾀﾞｲｽｹ', Y, M, D, '23:10', 12000, '新地4'),
+  row('ﾀﾞｲｽｹ', Y, M, D, '??:??', 12000, '新地4'),   // 時刻不明
+  row('ﾀﾞｲｽｹ', Y, M, D, '23:20', 0,     '新地4'),   // 金額0
+  row('ﾀﾞｲｽｹ', Y, M, D, '23:30', 'あ',  '新地4')    // 金額が読めない
+];
+dat = F('wbCollect_')(true);
+ok(dat.own.length === 1, '読める1件だけ残る');
+
+console.log('\n■ 期間の一覧');
+reset();
+TABS['ﾀﾞｲｽｹ'] = [row('ﾀﾞｲｽｹ', Y, M, D, '23:10', 12000, '新地4')];
+dat = F('wbCollect_')(true);
+ok(dat.periods.length >= 1, '期間が1つ以上ある');
+has(dat.periods[0].label, '今期', '先頭は今期');
+ok(dat.periods.every(p => p.from <= p.to), 'どの期間も 開始 <= 終了');
+ok(dat.own[0].d >= dat.periods[0].from && dat.own[0].d <= dat.periods[0].to,
+   'きょうの記録は今期に入る');
+
+console.log('\n■ doGet がページを返す');
+reset();
+TABS['ﾀﾞｲｽｹ'] = [row('ﾀﾞｲｽｹ', Y, M, D, '23:10', 12000, '新地4')];
+captured = null;
+F('doGet')({ parameter: { all: '1' } });
+ok(typeof captured === 'string' && captured.length > 5000, 'HTMLが返る');
+ok(captured.indexOf('/*__DATA__*/null') === -1, 'データが差し込まれている');
+has(captured, '"ok":true', '中身のJSONが入っている');
+has(captured, '新地4', '記録が入っている');
+
+console.log('\n■ 乗り場名に </script> が混ざってもページが壊れない');
+reset();
+TABS['ﾀﾞｲｽｹ'] = [row('ﾀﾞｲｽｹ', Y, M, D, '23:10', 12000, '</script><b>わる$&い')];
+captured = null;
+F('doGet')({ parameter: {} });
+ok(captured.indexOf('</script><b>') === -1, '生の </script> が出ていない');
+has(captured, '$&', '$& がそのまま残っている（差し込みで化けない）');
+
+/* ============ ここからページ側 ============ */
+console.log('\n■ ページが実際に描けるか（偽のブラウザで動かす）');
+
+// 最低限の偽DOM。innerHTML を受け取れればよい
+function fakeEl(id) {
+  return { id: id, innerHTML: '', textContent: '', value: '',
+           style: {}, dataset: {}, classList: { toggle(){}, add(){}, remove(){} } };
+}
+function runPage(html) {
+  const els = {};
+  const get = id => (els[id] = els[id] || fakeEl(id));
+  const pctx = {
+    console,
+    document: {
+      getElementById: get,
+      querySelectorAll: () => []
+    },
+    window: { scrollTo() {} },
+    location: { reload() {} }
+  };
+  pctx.window.document = pctx.document;
+  vm.createContext(pctx);
+  const m = html.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+  if (!m) throw new Error('ページのスクリプトが見つかりません');
+  vm.runInContext(m[1], pctx, { filename: 'webapp.html' });
+  return { els: els, ctx: pctx };
+}
+
+reset();
+TABS['ﾀﾞｲｽｹ'] = [
+  row('ﾀﾞｲｽｹ', Y, M, D, '23:10', 12000, '新地4', '', 20),
+  row('ﾀﾞｲｽｹ', Y, M, D, '01:30',  3000, '新地4', '', 5),
+  row('ﾀﾞｲｽｹ', Y, M, D, '02:00',  7000, 'ドン2', '', 10),
+  row('ﾀﾞｲｽｹ', Y, M, D, '22:00', 15000, '新地4', '', 30)
+];
+TABS['ｼｭﾝ'] = [ row('ｼｭﾝ', Y, M, D, '23:00', 5000, '新地7', '', 8) ];
+TABS['関空'] = [ row('ｵﾌﾟﾁｬ', Y, M, D, '00:10', 25000, '新地7', '行先：関空') ];
+captured = null;
+F('doGet')({ parameter: { all: '1' } });
+const page = runPage(captured);
+const view = page.els['view'];
+
+ok(view.innerHTML.length > 200, '① 立ち回りが描けた');
+has(view.innerHTML, '時間帯別', '時間帯別のグラフがある');
+has(view.innerHTML, '曜日区分別', '曜日区分別のグラフがある');
+has(view.innerHTML, '乗り場ランキング', '乗り場ランキングがある');
+has(view.innerHTML, 'ロングマップ', 'ロングマップがある');
+has(view.innerHTML, '5件', '自社5件が数えられている');
+// 上の3つの数字カードだけを取り出して確かめる
+const kpis = view.innerHTML.slice(0, view.innerHTML.indexOf('</div></div>', 
+  view.innerHTML.indexOf('ロング率')) + 12);
+has(kpis, '¥8,400', '自社の平均が正しい（42000/5）');
+ok(kpis.indexOf('¥25,000') === -1, 'オプチャの25,000円は自社の平均に混ぜていない');
+has(kpis, '>40<', 'ロング率 2/5 = 40%');
+// ロングマップのほうには、オプチャぶんも入っている
+has(view.innerHTML.slice(view.innerHTML.indexOf('ロングマップ')), '¥25,000',
+   'ロングマップにはオプチャの25,000円が入る');
+has(view.innerHTML.slice(view.innerHTML.indexOf('ロングマップ')), 'ｵﾌﾟﾁｬ1',
+   'ロングマップに「そのうちオプチャ何件か」が出る');
+ok(page.els['stamp'].textContent.length > 0, '最終更新が出ている');
+
+// ② 記録
+page.ctx.go('b');
+has(view.innerHTML, '¥25,000', '② 記録にはオプチャも出る');
+has(view.innerHTML, 'ｵﾌﾟﾁｬ', 'オプチャの札が付く');
+has(view.innerHTML, 'ロング', '区分の札が付く');
+has(view.innerHTML, '¥42,000', '日別の合計は自社ぶんだけ');
+
+// ③ ランキング
+page.ctx.go('c');
+has(view.innerHTML, '売上ランキング', '③ ランキングが描けた');
+has(view.innerHTML, '🥇 ﾀﾞｲｽｹ', '売上1位はﾀﾞｲｽｹ');
+has(view.innerHTML, '🥈 ｼｭﾝ', '2位はｼｭﾝ');
+has(view.innerHTML, '¥42,000', 'ﾀﾞｲｽｹの合計');
+has(view.innerHTML, '¥5,000', 'ｼｭﾝの合計');
+
+console.log('\n■ 記録が無くても落ちない');
+reset();
+captured = null;
+F('doGet')({ parameter: {} });
+const p2 = runPage(captured);
+has(p2.els['view'].innerHTML, '記録がありません', '空のときの案内が出る');
+p2.ctx.go('b'); has(p2.els['view'].innerHTML, '記録がありません', '記録タブも落ちない');
+p2.ctx.go('c'); has(p2.els['view'].innerHTML, '記録がありません', 'ランキングも落ちない');
+
+console.log('\n■ 読み込みに失敗したときの表示');
+{
+  const html = K('WB_HTML').replace('/*__DATA__*/null',
+    JSON.stringify({ ok: false, error: 'わざと失敗' }));
+  const p3 = runPage(html);
+  has(p3.els['view'].innerHTML, 'わざと失敗', '原因がそのまま出る');
+}
+
+console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
+process.exit(ng ? 1 : 0);

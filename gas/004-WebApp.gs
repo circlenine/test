@@ -1,0 +1,656 @@
+/**
+ * ================================================================
+ *  みんなの記録ページ（004-WebApp.gs）
+ *
+ *  ★★★  W001ver  （2026/09/06）  ★★★
+ *
+ *  ファイル記号: C=001-Code.gs / E=002-Extras.gs / L=003-LineReport.gs / W=004-WebApp.gs
+ *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
+ *
+ *  [W001ver] みんなの記録ページ（ウェブアプリ）の最初の版
+ *   ・📊 立ち回り … 時間帯別／曜日区分別の平均、乗り場ランキング、ロングマップ
+ *   ・📋 記録     … 日別のカード表示（オプチャも色分けして混ぜる）
+ *   ・🏆 ランキング … 期間の個人別 売上・件数・平均・ロング率・出勤日数
+ *
+ *  ※このファイルは tools/build_webapp.py が作ります。直すのは
+ *    gas/parts/WebApp.gs と gas/parts/webapp.html のほうです。
+ * ================================================================
+ */
+
+const WB_VERSION = "W001ver";
+
+/** 何日ぶんを持っていくか。古い記録まで全部見たいときは URL に ?all=1 を付ける */
+const WB_DAYS = 190;
+
+/** ブラウザからページを開いたとき */
+function doGet(e) {
+  const all = !!(e && e.parameter && e.parameter.all);
+  let data;
+  try {
+    data = wbCollect_(all);
+  } catch (err) {
+    data = { ok: false, error: (err && err.message) || String(err) };
+    try { logErr_("webapp", err); } catch (e2) {}
+  }
+
+  // < を逃がしておく。乗り場名などに </script> が混ざってもページが壊れないように
+  const json = JSON.stringify(data).replace(/</g, "\\u003c");
+  // 差し込みは関数で返す。文字列で渡すと $& などが特別扱いされて中身が化ける
+  const html = WB_HTML.replace("/*__DATA__*/null", function () { return json; });
+
+  return HtmlService.createHtmlOutput(html)
+    .setTitle("僕はグールだ｜みんなの記録")
+    .addMetaTag("viewport", "width=device-width, initial-scale=1, viewport-fit=cover")
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/** ページのURLを出す（メニューから見られるように） */
+function menuWebAppUrl() {
+  const ui = SpreadsheetApp.getUi();
+  let url = "";
+  try { url = ScriptApp.getService().getUrl(); } catch (e) {}
+  if (!url) {
+    ui.alert("📱 みんなの記録ページ",
+      "まだ公開されていません。\n\n" +
+      "Apps Script の画面で\n" +
+      "　右上「デプロイ」→「新しいデプロイ」\n" +
+      "　種類：ウェブアプリ\n" +
+      "　次のユーザーとして実行：自分\n" +
+      "　アクセスできるユーザー：全員\n" +
+      "で公開すると、ここにURLが出ます。", ui.ButtonSet.OK);
+    return;
+  }
+  ui.alert("📱 みんなの記録ページ",
+    "このURLをLINEグループに貼ってください。\n\n" + url +
+    "\n\n古い記録まで全部見たいときは、うしろに ?all=1 を付けます。",
+    ui.ButtonSet.OK);
+}
+
+/* ============ 記録を集める ============ */
+
+/** 「設定」タブがあればそれを、無ければ既定値を使う */
+function wbShortMax_() { return (typeof cfgShortMax_ === "function") ? cfgShortMax_() : 4999; }
+function wbLongMin_()  { return (typeof cfgLongMin_  === "function") ? cfgLongMin_()  : 10000; }
+function wbBizStart_() { return (typeof cfgBizStart_ === "function") ? cfgBizStart_() : 17; }
+
+/** 平日 / 金曜 / 土曜 / 日祝 */
+function wbDayType_(d) {
+  const w = d.getDay();
+  const hol = (typeof isHoliday_ === "function") ? isHoliday_(d) : false;
+  if (w === 0 || hol) return "日祝";
+  if (w === 6) return "土曜";
+  if (w === 5) return "金曜";
+  return "平日";
+}
+
+/** 17時起点の枠。00:30 は 24、05:00 は 29 になる */
+function wbSlot_(hh) { return hh < wbBizStart_() ? hh + 24 : hh; }
+
+/**
+ * 個人タブ＝自社の記録、エリアタブと関空・ﾊﾞﾗｼの「ｵﾌﾟﾁｬ」行＝オプチャ情報。
+ * エリアタブには個人タブの写しも入っているので、同じ乗車を二度数えないようにする。
+ */
+function wbCollect_(all) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const since = all ? null : new Date(Date.now() - WB_DAYS * 86400000);
+
+  const own = [], opu = [];
+  const seen = {};
+  let minD = null, maxD = null;
+
+  const read = function (name, personal) {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const last = sh.getLastRow();
+    if (last < START_ROW) return;
+
+    sh.getRange(START_ROW, 1, last - START_ROW + 1, LAST_COL).getValues().forEach(function (r) {
+      const d = r[C_DATE - 1];
+      if (!(d instanceof Date)) return;
+
+      const who = String(r[C_SENDER - 1]).trim();
+      const isOpu = (typeof toFullKana_ === "function")
+        ? toFullKana_(who).replace(/[\s　]/g, "").indexOf("オプチャ") !== -1
+        : who.indexOf("ｵﾌﾟﾁｬ") !== -1 || who.indexOf("オプチャ") !== -1;
+
+      // 個人タブは自社ぶんだけ、それ以外のタブはオプチャぶんだけ拾う。
+      // こうすると、エリアタブに入っている写しを数えずに済む。
+      if (personal ? isOpu : !isOpu) return;
+
+      if (minD === null || d < minD) minD = d;
+      if (maxD === null || d > maxD) maxD = d;
+      if (since && d < since) return;
+
+      const money = parseInt(String(r[C_MONEY - 1]).replace(/[^0-9]/g, ""), 10);
+      if (isNaN(money) || money <= 0) return;
+
+      const tm = String(r[C_TIME - 1]).match(/(\d{1,2}):(\d{2})/);
+      if (!tm) return;
+
+      const place = String(r[C_PLACE - 1]).replace(/\n/g, " ").replace(/\s+/g, " ").trim();
+      const key = (isOpu ? "O" : "S") + "|" + wbYmd_(d) + "|" + tm[0] + "|" + money + "|" + place;
+      if (seen[key]) return;
+      seen[key] = true;
+
+      const w = String(r[C_WAIT - 1]).replace(/[^0-9]/g, "");
+      const rec = {
+        w: isOpu ? "ｵﾌﾟﾁｬ" : who,
+        d: wbYmd_(d),
+        t: tm[0],
+        m: money,
+        p: place,
+        o: String(r[C_OTHER - 1]).replace(/\n/g, " ").trim().slice(0, 60),
+        k: String(r[C_MARK - 1]).trim(),
+        wt: w === "" ? null : parseInt(w, 10),
+        y: wbDayType_(d),
+        s: wbSlot_(parseInt(tm[1], 10))
+      };
+      (isOpu ? opu : own).push(rec);
+    });
+  };
+
+  PERSONAL_TABS.forEach(function (n) { read(n, true); });
+  AREA_TABS.concat(FLAG_TABS).forEach(function (n) { read(n, false); });
+
+  return {
+    ok: true,
+    updated: wbNow_(),
+    all: !!all,
+    days: WB_DAYS,
+    shortMax: wbShortMax_(),
+    longMin: wbLongMin_(),
+    members: PERSONAL_TABS.slice(),
+    periods: wbPeriods_(minD, maxD),
+    own: own,
+    opu: opu
+  };
+}
+
+function wbYmd_(d) {
+  return d.getFullYear() + "-" + pad2_(d.getMonth() + 1) + "-" + pad2_(d.getDate());
+}
+
+function wbNow_() {
+  const n = new Date();
+  const w = ["日", "月", "火", "水", "木", "金", "土"];
+  return (n.getMonth() + 1) + "/" + n.getDate() + "(" + w[n.getDay()] + ") " +
+         pad2_(n.getHours()) + ":" + pad2_(n.getMinutes());
+}
+
+/**
+ * 期間の一覧（16日〜翌15日）。新しいものが先。
+ * レポートの期間プルダウンと同じ区切りにそろえてある。
+ */
+function wbPeriods_(minD, maxD) {
+  const out = [];
+  const today = maxD && maxD > new Date() ? maxD : new Date();
+  const start = function (d) {
+    return d.getDate() >= 16 ? new Date(d.getFullYear(), d.getMonth(), 16)
+                             : new Date(d.getFullYear(), d.getMonth() - 1, 16);
+  };
+  const lab = function (a, b) {
+    const w = ["日", "月", "火", "水", "木", "金", "土"];
+    return (a.getMonth() + 1) + "/" + a.getDate() + "(" + w[a.getDay()] + ")〜" +
+           (b.getMonth() + 1) + "/" + b.getDate() + "(" + w[b.getDay()] + ")";
+  };
+
+  let s = start(today);
+  out.push({ from: wbYmd_(s), to: wbYmd_(today), label: lab(s, today) + "（今期）" });
+
+  const limit = minD ? start(minD) : new Date(today.getFullYear(), today.getMonth() - 11, 16);
+  let guard = 0;
+  while (s.getTime() > limit.getTime() && guard++ < 60) {
+    const ps = new Date(s.getFullYear(), s.getMonth() - 1, 16);
+    const pe = new Date(s.getFullYear(), s.getMonth(), 15);
+    out.push({ from: wbYmd_(ps), to: wbYmd_(pe), label: lab(ps, pe) });
+    s = ps;
+  }
+  return out;
+}
+
+
+/* ============ ページ本体 ============ */
+
+const WB_HTML = `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<title>僕はグールだ｜みんなの記録</title>
+<style>
+:root{
+  --bg:#0a0e17; --card:#121a28; --card2:#0e1522; --line:#22304a;
+  --fg:#e8eef7; --dim:#8ca0be; --dim2:#5f7392;
+  --blue:#38bdf8; --orange:#fb923c; --green:#34d399; --purple:#a78bfa; --red:#f87171;
+  --gold:#fbbf24;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+  font-size:14px;line-height:1.5;padding-bottom:76px}
+h2{font-size:15px;margin:0 0 10px}
+a{color:var(--blue)}
+
+/* --- 上のバー --- */
+header{position:sticky;top:0;z-index:20;background:rgba(10,14,23,.94);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:10px 12px}
+.hrow{display:flex;align-items:center;gap:8px}
+.logo{font-weight:800;font-size:15px;letter-spacing:.02em}
+.stamp{margin-left:auto;font-size:11px;color:var(--dim2)}
+.reload{background:none;border:1px solid var(--line);color:var(--dim);
+  border-radius:8px;padding:4px 9px;font-size:11px}
+
+/* --- 絞り込み --- */
+.filters{display:flex;gap:6px;overflow-x:auto;padding:8px 12px 0;scrollbar-width:none}
+.filters::-webkit-scrollbar{display:none}
+select{background:var(--card);color:var(--fg);border:1px solid var(--line);
+  border-radius:9px;padding:7px 9px;font-size:12px;max-width:64vw;flex:none}
+.chips{display:flex;gap:6px;overflow-x:auto;padding:8px 12px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;background:var(--card);border:1px solid var(--line);color:var(--dim);
+  border-radius:999px;padding:6px 13px;font-size:12px;white-space:nowrap}
+.chip.on{background:#0b3a52;border-color:var(--blue);color:#bae6fd;font-weight:700}
+
+main{padding:4px 12px 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:13px;margin-bottom:11px}
+.card.blue{border-color:#1d4ed8aa;box-shadow:0 0 0 1px #1d4ed822}
+.card.orange{border-color:#c2570caa;box-shadow:0 0 0 1px #c2570c22}
+.chead{display:flex;align-items:baseline;gap:7px;margin-bottom:11px}
+.chead b{font-size:14px}
+.chead .sub{font-size:11px;color:var(--dim2)}
+.badge{margin-left:auto;background:var(--card2);border:1px solid var(--line);
+  border-radius:9px;padding:4px 9px;font-size:11px;color:var(--dim);text-align:right}
+.badge i{font-style:normal;color:var(--fg);font-weight:700}
+
+/* --- 数字カード --- */
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:11px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:10px 8px;text-align:center}
+.kpi .l{font-size:10px;color:var(--dim2)}
+.kpi .v{font-size:17px;font-weight:800;margin-top:3px}
+.kpi .v small{font-size:11px;font-weight:600;color:var(--dim)}
+
+/* --- 縦棒グラフ --- */
+.bars{display:flex;align-items:flex-end;gap:3px;height:130px;padding-top:16px}
+.bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;
+  align-items:center;height:100%;position:relative}
+.bar .fill{width:100%;border-radius:5px 5px 2px 2px;min-height:2px;
+  background:linear-gradient(180deg,#7dd3fc,#0369a1)}
+.bar.top .fill{background:linear-gradient(180deg,#fff,#38bdf8);
+  box-shadow:0 0 10px #38bdf877}
+.bar.o .fill{background:linear-gradient(180deg,#fdba74,#c2410c)}
+.bar.o.top .fill{background:linear-gradient(180deg,#fff,#fb923c);
+  box-shadow:0 0 10px #fb923c77}
+.bar .n{position:absolute;top:-15px;font-size:9px;color:var(--dim2);white-space:nowrap}
+.bar.top .n{color:var(--fg);font-weight:700}
+.xaxis{display:flex;gap:3px;margin-top:5px}
+.xaxis span{flex:1;text-align:center;font-size:9px;color:var(--dim2)}
+
+/* --- 横棒（ランキング） --- */
+.rank{display:flex;flex-direction:column;gap:9px}
+.rrow .t{display:flex;align-items:baseline;gap:6px;font-size:12px;margin-bottom:4px}
+.rrow .t .nm{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rrow .t .r{margin-left:auto;color:var(--dim);font-size:11px;flex:none}
+.rrow .t .r b{color:var(--fg);font-size:13px}
+.track{height:7px;background:var(--card2);border-radius:99px;overflow:hidden;display:flex}
+.track i{display:block;height:100%}
+.seg-s{background:#334966}.seg-m{background:#0284c7}.seg-l{background:var(--gold)}
+.legend{display:flex;gap:11px;font-size:10px;color:var(--dim2);margin-top:9px}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:3px;
+  margin-right:4px;vertical-align:-1px}
+
+/* --- 記録カード --- */
+.day{display:flex;align-items:baseline;gap:8px;margin:16px 2px 8px}
+.day .d{font-size:15px;font-weight:800}
+.day .s{font-size:11px;color:var(--dim2)}
+.day .tot{margin-left:auto;font-size:13px;font-weight:800;color:var(--orange)}
+.ride{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--green);
+  border-radius:11px;padding:10px 12px;margin-bottom:7px}
+.ride.opu{border-left-color:var(--purple)}
+.ride.warn{border-left-color:var(--red)}
+.r1{display:flex;align-items:center;gap:8px}
+.r1 .tm{font-variant-numeric:tabular-nums;color:var(--dim);font-size:12px}
+.r1 .who{font-size:10px;color:var(--dim2);border:1px solid var(--line);
+  border-radius:6px;padding:1px 6px}
+.r1 .yen{margin-left:auto;font-size:19px;font-weight:800;color:var(--orange);
+  font-variant-numeric:tabular-nums}
+.r2{margin-top:6px;font-size:13px;font-weight:600}
+.r3{margin-top:3px;font-size:11px;color:var(--dim2)}
+.tag{display:inline-block;font-size:10px;border-radius:6px;padding:1px 7px;margin-left:6px}
+.tag.l{background:#442f04;color:var(--gold)}
+.tag.m{background:#082f49;color:#7dd3fc}
+.tag.s{background:#1e293b;color:var(--dim)}
+
+/* --- 下のタブ --- */
+nav{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;
+  background:rgba(10,14,23,.97);backdrop-filter:blur(10px);
+  border-top:1px solid var(--line);padding:7px 0 max(7px,env(safe-area-inset-bottom))}
+nav button{flex:1;background:none;border:0;color:var(--dim2);
+  font-size:10px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:3px}
+nav button .ic{font-size:19px;line-height:1}
+nav button.on{color:var(--blue)}
+.empty{text-align:center;color:var(--dim2);padding:40px 20px;font-size:13px}
+.note{font-size:11px;color:var(--dim2);margin-top:9px}
+.err{background:#3f1d1d;border:1px solid #7f1d1d;border-radius:12px;padding:13px;
+  color:#fecaca;font-size:13px}
+</style></head><body>
+
+<header>
+  <div class="hrow">
+    <span class="logo">🚕 みんなの記録</span>
+    <span class="stamp" id="stamp"></span>
+    <button class="reload" onclick="location.reload()">更新</button>
+  </div>
+</header>
+
+<div class="filters">
+  <select id="period" onchange="draw()"></select>
+  <select id="member" onchange="draw()"></select>
+</div>
+<div class="chips" id="dayChips"></div>
+
+<main id="view"></main>
+
+<nav>
+  <button id="nav-a" class="on" onclick="go('a')"><span class="ic">📊</span>立ち回り</button>
+  <button id="nav-b" onclick="go('b')"><span class="ic">📋</span>記録</button>
+  <button id="nav-c" onclick="go('c')"><span class="ic">🏆</span>ランキング</button>
+</nav>
+
+<script>
+const DATA = /*__DATA__*/null;
+let tab = 'a', dayType = '全部';
+
+const yen = n => '¥' + Math.round(n).toLocaleString();
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const WD = ['日','月','火','水','木','金','土'];
+const dObj = s => { const p = String(s).split('-'); return new Date(+p[0], +p[1]-1, +p[2]); };
+const dLabel = s => { const d = dObj(s);
+  return (d.getMonth()+1) + '/' + d.getDate() + '(' + WD[d.getDay()] + ')'; };
+const band = m => m >= DATA.longMin ? 'l' : (m > DATA.shortMax ? 'm' : 's');
+const bandName = { l:'ロング', m:'ミドル', s:'ショート' };
+const slotLabel = s => (s < 24 ? s : s - 24) + '時';
+
+/* ---------- 起動 ---------- */
+function boot() {
+  if (!DATA || !DATA.ok) {
+    document.getElementById('view').innerHTML =
+      '<div class="err">記録を読み込めませんでした。<br>' +
+      esc((DATA && DATA.error) || '原因不明') + '</div>';
+    return;
+  }
+  document.getElementById('stamp').textContent = DATA.updated;
+
+  const ps = document.getElementById('period');
+  ps.innerHTML = DATA.periods.map((p, i) =>
+    '<option value="' + i + '">' + esc(p.label) + '</option>').join('');
+
+  document.getElementById('member').innerHTML =
+    '<option value="">全員</option>' +
+    DATA.members.map(m => '<option value="' + esc(m) + '">' + esc(m) + '</option>').join('');
+
+  document.getElementById('dayChips').innerHTML =
+    ['全部','平日','金曜','土曜','日祝'].map(d =>
+      '<button class="chip' + (d === '全部' ? ' on' : '') + '" data-d="' + d +
+      '" onclick="setDay(this)">' + d + '</button>').join('');
+
+  draw();
+}
+function setDay(el) {
+  dayType = el.dataset.d;
+  document.querySelectorAll('#dayChips .chip')
+    .forEach(c => c.classList.toggle('on', c === el));
+  draw();
+}
+function go(t) {
+  tab = t;
+  ['a','b','c'].forEach(k =>
+    document.getElementById('nav-' + k).classList.toggle('on', k === t));
+  document.getElementById('member').style.display = (t === 'c') ? 'none' : '';
+  document.getElementById('dayChips').style.display = (t === 'b') ? 'none' : '';
+  window.scrollTo(0, 0);
+  draw();
+}
+
+/* ---------- 絞り込み ---------- */
+function pick() {
+  const p = DATA.periods[+document.getElementById('period').value] || DATA.periods[0];
+  const mem = document.getElementById('member').value;
+  const f = r => r.d >= p.from && r.d <= p.to
+    && (tab === 'b' || dayType === '全部' || r.y === dayType);
+  const own = DATA.own.filter(r => f(r) && (!mem || r.w === mem));
+  const opu = DATA.opu.filter(f);
+  return { p: p, own: own, opu: opu, mem: mem };
+}
+
+/* ---------- 描く ---------- */
+function draw() {
+  const s = pick();
+  const v = document.getElementById('view');
+  v.innerHTML = tab === 'a' ? viewA(s) : tab === 'b' ? viewB(s) : viewC(s);
+}
+
+/* ===== ① 立ち回り ===== */
+function viewA(s) {
+  const rows = s.own;
+  if (!rows.length) return empty('この期間の記録がありません');
+
+  const sum = rows.reduce((a, r) => a + r.m, 0);
+  const longN = rows.filter(r => band(r.m) === 'l').length;
+  const H = [];
+
+  H.push('<div class="kpis">' +
+    kpi('件数', rows.length + '<small>件</small>') +
+    kpi('平均売上', yen(sum / rows.length)) +
+    kpi('ロング率', Math.round(longN / rows.length * 100) + '<small>%</small>') +
+    '</div>');
+
+  // 時間帯別（17時〜翌5時）
+  const slots = [];
+  for (let x = 17; x <= 29; x++) slots.push(x);
+  H.push(barCard('⏰ 時間帯別 平均売上', '1時間ごと', slots.map(x => {
+    const g = rows.filter(r => r.s === x);
+    return { k: slotLabel(x), n: g.length,
+             v: g.length ? g.reduce((a, r) => a + r.m, 0) / g.length : 0 };
+  }), false));
+
+  // 曜日区分別
+  H.push(barCard('📅 曜日区分別 平均売上', '1回あたり',
+    ['平日','金曜','土曜','日祝'].map(t => {
+      const g = s.own.filter(r => r.y === t);   // ここは区分の比較なので絞らない
+      return { k: t, n: g.length,
+               v: g.length ? g.reduce((a, r) => a + r.m, 0) / g.length : 0 };
+    }), true));
+
+  H.push(placeCard('📍 乗り場ランキング（自社）', rows, '平均売上の高い順。3件以上のみ'));
+
+  // ロングマップ（オプチャ込み・件数）
+  const map = s.own.concat(s.opu).filter(r => band(r.m) === 'l');
+  H.push(longMapCard(map, s.opu.length));
+
+  return H.join('');
+}
+
+function kpi(l, v) {
+  return '<div class="kpi"><div class="l">' + l + '</div><div class="v">' + v + '</div></div>';
+}
+function empty(t) { return '<div class="empty">' + esc(t) + '</div>'; }
+
+function barCard(title, sub, items, orange) {
+  const max = Math.max.apply(null, items.map(i => i.v).concat([1]));
+  const best = items.reduce((a, b) => b.v > a.v ? b : a, items[0]);
+  const bars = items.map(i =>
+    '<div class="bar' + (orange ? ' o' : '') + (i === best && i.v > 0 ? ' top' : '') + '">' +
+      (i.v > 0 ? '<span class="n">' + Math.round(i.v / 100) / 10 + '千</span>' : '') +
+      '<span class="fill" style="height:' + (i.v / max * 100) + '%"></span></div>').join('');
+  const xs = items.map(i => '<span>' + esc(i.k) + '</span>').join('');
+  return '<div class="card ' + (orange ? 'orange' : 'blue') + '">' +
+    '<div class="chead"><b>' + title + '</b><span class="sub">' + sub + '</span>' +
+    '<span class="badge">最高：' + esc(best.k) + '<br><i>' + yen(best.v) + '</i></span></div>' +
+    '<div class="bars">' + bars + '</div><div class="xaxis">' + xs + '</div>' +
+    '<div class="note">棒の上は平均売上（千円）。' +
+      items.map(i => i.n).reduce((a, b) => a + b, 0) + '件ぶん</div></div>';
+}
+
+function placeCard(title, rows, sub) {
+  const by = {};
+  rows.forEach(r => {
+    const p = r.p || '（不明）';
+    (by[p] = by[p] || []).push(r);
+  });
+  let list = Object.keys(by).map(p => {
+    const g = by[p];
+    const sum = g.reduce((a, r) => a + r.m, 0);
+    const c = { s:0, m:0, l:0 };
+    g.forEach(r => c[band(r.m)]++);
+    const waits = g.filter(r => r.wt != null).map(r => r.wt);
+    const w = waits.length ? waits.reduce((a, b) => a + b, 0) / waits.length : null;
+    return { p: p, n: g.length, avg: sum / g.length, c: c, w: w };
+  }).filter(x => x.n >= 3).sort((a, b) => b.avg - a.avg).slice(0, 12);
+
+  if (!list.length) return '<div class="card"><div class="chead"><b>' + title +
+    '</b></div>' + empty('3件以上ある乗り場がまだありません') + '</div>';
+
+  const rowsHtml = list.map(x =>
+    '<div class="rrow"><div class="t"><span class="nm">' + esc(x.p) + '</span>' +
+    '<span class="r">' + x.n + '件' + (x.w != null ? ' / 待' + Math.round(x.w) + '分' : '') +
+    ' <b>' + yen(x.avg) + '</b></span></div>' +
+    '<div class="track">' +
+      seg(x.c.s, x.n, 's') + seg(x.c.m, x.n, 'm') + seg(x.c.l, x.n, 'l') +
+    '</div></div>').join('');
+
+  return '<div class="card"><div class="chead"><b>' + title + '</b>' +
+    '<span class="sub">' + sub + '</span></div>' +
+    '<div class="rank">' + rowsHtml + '</div>' +
+    '<div class="legend">' +
+      '<span><i class="seg-s"></i>ショート</span>' +
+      '<span><i class="seg-m"></i>ミドル</span>' +
+      '<span><i class="seg-l"></i>ロング</span></div></div>';
+}
+function seg(n, tot, cls) {
+  return n ? '<i class="seg-' + cls + '" style="width:' + (n / tot * 100) + '%"></i>' : '';
+}
+
+function longMapCard(rows, opuTotal) {
+  if (!rows.length) return '<div class="card orange"><div class="chead">' +
+    '<b>🗺 ロングマップ</b><span class="sub">オプチャ込み</span></div>' +
+    empty('この期間のロングがありません') + '</div>';
+
+  const by = {};
+  rows.forEach(r => {
+    const p = r.p || '（不明）';
+    by[p] = by[p] || { n: 0, o: 0, sum: 0 };
+    by[p].n++; by[p].sum += r.m;
+    if (r.w === 'ｵﾌﾟﾁｬ') by[p].o++;
+  });
+  const list = Object.keys(by).map(p => ({ p: p, ...by[p] }))
+    .sort((a, b) => b.n - a.n).slice(0, 15);
+  const max = list[0].n;
+
+  const html = list.map(x =>
+    '<div class="rrow"><div class="t"><span class="nm">' + esc(x.p) + '</span>' +
+    '<span class="r">' + (x.o ? 'ｵﾌﾟﾁｬ' + x.o + ' / ' : '') + '平均' +
+    yen(x.sum / x.n) + ' <b>' + x.n + '件</b></span></div>' +
+    '<div class="track"><i class="seg-l" style="width:' + (x.n / max * 100) + '%"></i>' +
+    '</div></div>').join('');
+
+  return '<div class="card orange"><div class="chead"><b>🗺 ロングマップ</b>' +
+    '<span class="sub">￥' + DATA.longMin.toLocaleString() + '以上・オプチャ込み</span>' +
+    '<span class="badge">ロング<br><i>' + rows.length + '件</i></span></div>' +
+    '<div class="rank">' + html + '</div>' +
+    '<div class="note">オプチャ情報 ' + opuTotal + '件を含めた件数分布です。' +
+    '自社の平均売上には入れていません。</div></div>';
+}
+
+/* ===== ② 記録 ===== */
+function viewB(s) {
+  const rows = s.own.concat(s.opu).slice().sort((a, b) =>
+    a.d === b.d ? rank(b.t) - rank(a.t) : (a.d < b.d ? 1 : -1));
+  if (!rows.length) return empty('この期間の記録がありません');
+
+  const H = [];
+  let cur = '';
+  let dayRows = [];
+  const flush = () => {
+    if (!dayRows.length) return;
+    const tot = dayRows.filter(r => r.w !== 'ｵﾌﾟﾁｬ').reduce((a, r) => a + r.m, 0);
+    H.push('<div class="day"><span class="d">' + dLabel(cur) + '</span>' +
+      '<span class="s">' + dayRows.length + '件</span>' +
+      (tot ? '<span class="tot">' + yen(tot) + '</span>' : '') + '</div>');
+    H.push(dayRows.map(rideCard).join(''));
+    dayRows = [];
+  };
+  rows.forEach(r => { if (r.d !== cur) { flush(); cur = r.d; } dayRows.push(r); });
+  flush();
+  return H.join('');
+}
+function rank(t) { const p = t.split(':'); let h = +p[0]; if (h < 17) h += 24;
+  return h * 60 + (+p[1]); }
+
+function rideCard(r) {
+  const b = band(r.m);
+  const opu = r.w === 'ｵﾌﾟﾁｬ';
+  const warn = r.k === '⚠️';
+  return '<div class="ride' + (opu ? ' opu' : '') + (warn ? ' warn' : '') + '">' +
+    '<div class="r1"><span class="tm">' + esc(r.t) + '</span>' +
+    '<span class="who">' + esc(r.w) + '</span>' +
+    (r.wt != null ? '<span class="who">待' + r.wt + '分</span>' : '') +
+    '<span class="yen">' + yen(r.m) + '</span></div>' +
+    '<div class="r2">' + esc(r.p || '（乗り場不明）') +
+    '<span class="tag ' + b + '">' + bandName[b] + '</span></div>' +
+    (r.o ? '<div class="r3">' + esc(r.o) + '</div>' : '') + '</div>';
+}
+
+/* ===== ③ ランキング ===== */
+function viewC(s) {
+  const rows = DATA.own.filter(r => r.d >= s.p.from && r.d <= s.p.to
+    && (dayType === '全部' || r.y === dayType));
+  if (!rows.length) return empty('この期間の記録がありません');
+
+  const by = {};
+  rows.forEach(r => {
+    by[r.w] = by[r.w] || { n: 0, sum: 0, l: 0, days: {} };
+    by[r.w].n++; by[r.w].sum += r.m; by[r.w].days[r.d] = 1;
+    if (band(r.m) === 'l') by[r.w].l++;
+  });
+  const list = Object.keys(by).map(w => {
+    const x = by[w];
+    const days = Object.keys(x.days).length;
+    return { w: w, n: x.n, sum: x.sum, avg: x.sum / x.n,
+             lr: x.l / x.n * 100, days: days, per: x.sum / days };
+  }).sort((a, b) => b.sum - a.sum);
+
+  const max = list[0].sum;
+  const medal = ['🥇','🥈','🥉'];
+
+  const H = ['<div class="kpis">' +
+    kpi('のべ件数', rows.length + '<small>件</small>') +
+    kpi('合計売上', yen(rows.reduce((a, r) => a + r.m, 0))) +
+    kpi('全体平均', yen(rows.reduce((a, r) => a + r.m, 0) / rows.length)) +
+    '</div>'];
+
+  H.push('<div class="card"><div class="chead"><b>🏆 売上ランキング</b>' +
+    '<span class="sub">' + esc(s.p.label.replace('（今期）','')) + '</span></div><div class="rank">' +
+    list.map((x, i) =>
+      '<div class="rrow"><div class="t"><span class="nm">' +
+      (medal[i] || (i + 1) + '.') + ' ' + esc(x.w) + '</span>' +
+      '<span class="r">' + x.days + '日 / ' + x.n + '件 <b>' + yen(x.sum) + '</b></span></div>' +
+      '<div class="track"><i class="seg-l" style="width:' + (x.sum / max * 100) + '%"></i></div>' +
+      '</div>').join('') + '</div></div>');
+
+  H.push('<div class="card"><div class="chead"><b>📈 中身くらべ</b>' +
+    '<span class="sub">1回あたり・1日あたり</span></div><div class="rank">' +
+    list.slice().sort((a, b) => b.avg - a.avg).map(x =>
+      '<div class="rrow"><div class="t"><span class="nm">' + esc(x.w) + '</span>' +
+      '<span class="r">日' + yen(x.per) + ' / ロング' + Math.round(x.lr) + '% ' +
+      '<b>' + yen(x.avg) + '</b></span></div>' +
+      '<div class="track"><i class="seg-m" style="width:' +
+      (x.avg / list.reduce((a, b) => Math.max(a, b.avg), 1) * 100) + '%"></i></div>' +
+      '</div>').join('') + '</div>' +
+    '<div class="note">太字は1回あたりの平均売上。日＝出勤1日あたり。</div></div>');
+
+  return H.join('');
+}
+
+boot();
+</script></body></html>
+`;

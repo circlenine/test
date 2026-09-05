@@ -1,12 +1,20 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C017ver  （2026/09/06）  ★★★   ← もとは version 232
+ *  ★★★  C018ver  （2026/09/06）  ★★★   ← もとは version 232
  *
  *  ファイル記号: C=001-Code.gs / L=003-LineReport.gs / E=002-Extras.gs
  *  ※ Apps Script 上のファイル名も「001-Code」にそろえてください
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C018ver]
+ *   ・「軽量モード」を足した（設定タブで はい／いいえ）
+ *     セルの色ぬりをやめて、並び順・書式・枠線だけにする
+ *     色を持ったセルが数千あるとスマホの描画が重いので、その対策
+ *     見るのは 004-WebApp.gs（みんなの記録ページ）に任せる前提
+ *   ・メニューに「📱 みんなの記録ページのURL」を足した
+ *     004-WebApp.gs を入れているときだけ出る
  *
  *  [C017ver]
  *   ・設定の読み出しが遅かったのを直した（C011で入れた作りの手直し）
@@ -338,7 +346,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C017ver";
+const CODE_VERSION = "C018ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -401,7 +409,10 @@ const SETTINGS_DEFS = [
   { key: "高すぎる金額の線（円）",     def: 40000,  kind: "num",
     help: "これ以上の金額は ⚠️ を付けて要確認にする" },
   { key: "裏メッセージの文面",         def: "📈{期間}レポート作成 byシバンニ", kind: "text",
-    help: "LINEの通知に出る文字。{期間} が 8/16(日)～9/15(月) に置き換わります" }
+    help: "LINEの通知に出る文字。{期間} が 8/16(日)～9/15(月) に置き換わります" },
+  { key: "軽量モード",                 def: "いいえ", kind: "text",
+    help: "「はい」にすると、セルの色ぬりをやめて軽くします。" +
+          "並び順・書式・枠線はそのまま。見るのは「みんなの記録ページ」に任せるとき用" }
 ];
 
 // 1回の実行のあいだだけ覚えておく（毎回シートを読みに行かないため）
@@ -482,6 +493,10 @@ function cfgOpuMinYen_()  { return cfg_("オプチャの最低金額（円）");
 function cfgNearMin_()    { return cfg_("要確認とみなす時刻の幅（分）"); }
 function cfgHighYen_()    { return cfg_("高すぎる金額の線（円）"); }
 function cfgAltText_()    { return cfg_("裏メッセージの文面"); }
+/** 軽量モードか。「はい」「on」「true」「1」のどれかなら ON とみなす */
+function cfgLight_() {
+  return /^(はい|ハイ|on|ON|true|TRUE|1|yes|YES)$/.test(String(cfg_("軽量モード")).trim());
+}
 
 /** 「17:00〜翌05:15（29:15）」という説明用の文字を作る */
 function cfgHoursText_() {
@@ -2619,10 +2634,21 @@ function applyStyles_(sheet, out, meta) {
       .setFontSize(9).setFontWeight("bold")
       .setHorizontalAlignment("center").setFontColor("#000000");
   }
-  sheet.getRange(START_ROW, C_WAIT,   n, 1).setBackgrounds(waitBg).setFontColors(waitTx);
-  sheet.getRange(START_ROW, C_TIME,   n, 1).setBackgrounds(timeBg).setFontColors(timeTx);
-  sheet.getRange(START_ROW, C_MONEY,  n, 1).setBackgrounds(moneyBg).setFontColors(moneyTx);
-  sheet.getRange(START_ROW, C_METHOD, n, 1).setBackgrounds(methodBg).setFontColors(methodTx);
+  // 軽量モードでは色ぬりをしない。
+  // 色を持ったセルが数千あると、スマホのスプレッドシートが描画で固まるため。
+  // 並び順・書式・枠線は残るので、データとしては何も変わらない。
+  if (cfgLight_()) {
+    const white = [], black = [];
+    for (let i = 0; i < n; i++) { white.push(["#ffffff"]); black.push(["#000000"]); }
+    [C_WAIT, C_TIME, C_MONEY, C_METHOD].forEach(function (col) {
+      sheet.getRange(START_ROW, col, n, 1).setBackgrounds(white).setFontColors(black);
+    });
+  } else {
+    sheet.getRange(START_ROW, C_WAIT,   n, 1).setBackgrounds(waitBg).setFontColors(waitTx);
+    sheet.getRange(START_ROW, C_TIME,   n, 1).setBackgrounds(timeBg).setFontColors(timeTx);
+    sheet.getRange(START_ROW, C_MONEY,  n, 1).setBackgrounds(moneyBg).setFontColors(moneyTx);
+    sheet.getRange(START_ROW, C_METHOD, n, 1).setBackgrounds(methodBg).setFontColors(methodTx);
+  }
   sheet.getRange(START_ROW, C_PLACE,  n, 1).setFontSizes(placeSize);
 
   // 年見出し行の上に線を引く（12月 → 翌年 の境目が分かるように）※まとめて1回
@@ -2775,6 +2801,11 @@ function onOpen() {
     .addItem("📏 行の高さと折り返しだけ直す", "menuFixRowHeights")
     .addItem("🩺 なぜ整形されないか調べる", "menuDiagnose")
     .addItem("🩺 日付のおかしい行を探す", "menuFindBadDates");
+
+  // 004-WebApp.gs を入れているときだけ出す
+  if (typeof menuWebAppUrl === "function") {
+    m1.addItem("📱 みんなの記録ページのURL", "menuWebAppUrl");
+  }
 
   const m6 = ui.createMenu("⬇️ イライラを沈めたいとき")
     .addItem("😂 とりあえず笑いに行く", "menuChill");

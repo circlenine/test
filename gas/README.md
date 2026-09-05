@@ -6,11 +6,12 @@
 
 | 記号 | ファイル | いま | Apps Script 側の名前 |
 |---|---|---|---|
-| **C** | `001-Code.gs`（統合スクリプト） | C017ver | `001-Code` |
+| **C** | `001-Code.gs`（統合スクリプト） | C018ver | `001-Code` |
 | **E** | `002-Extras.gs` | E004ver | `002-Extras` |
 | **L** | `003-LineReport.gs` | L005ver | `003-LineReport` |
+| **W** | `004-WebApp.gs`（みんなの記録ページ） | W001ver | `004-WebApp` |
 
-**貼るのはこの3つだけ。** 番号の順に並ぶので、上から順に貼っていけば漏れない。
+**貼るのはこの4つだけ。** 番号の順に並ぶので、上から順に貼っていけば漏れない。
 `gas/parts/` の中は、`002-Extras.gs` を組み立てるための材料なので貼らなくてよい。
 
 Apps Script 上のファイル名も **`001-Code`** のようにそろえる（旧: `コード` / `Code`）。
@@ -20,6 +21,9 @@ Apps Script 上のファイル名も **`001-Code`** のようにそろえる（�
 手元のファイルと実際に動いているものがずれていないか、これで確かめられる。
 
 `002-Extras.gs` は `tools/build_extras.py` で組み立てる（バージョンと履歴もそこで管理）。
+`004-WebApp.gs` は `tools/build_webapp.py` で組み立てる。
+直すのは `gas/parts/WebApp.gs`（データを集める側）と
+`gas/parts/webapp.html`（画面）のほう。
 `gas/parts/Strategy.gs` / `Opucha.gs` / `ChartFit.gs` を直したら:
 
 ```

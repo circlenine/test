@@ -9,11 +9,19 @@ Apps Script に貼るのは、ひとつ上の階層にある3つだけです。
 | `Opucha.gs` | オプチャ印を付ける／外す画面 | `002-Extras.gs` に束ねられる |
 | `ChartFit.gs` | グラフをZ列の幅にそろえる | `002-Extras.gs` に束ねられる |
 | `MapLink.gs` | G列の乗り場名 → Googleマップ | **まだどこにも入っていない**（未導入） |
+| `WebApp.gs` | みんなの記録ページ（データを集める側） | `../004-WebApp.gs` に束ねられる |
+| `webapp.html` | みんなの記録ページ（画面） | 同上 |
 
 `Strategy.gs` / `Opucha.gs` / `ChartFit.gs` を直したら、必ず組み立て直します。
 
 ```
 python3 tools/build_extras.py
+```
+
+`WebApp.gs` / `webapp.html` を直したときは、こちら。
+
+```
+python3 tools/build_webapp.py
 ```
 
 `MapLink.gs` だけは束ねていません。使うときは、そのまま Apps Script に

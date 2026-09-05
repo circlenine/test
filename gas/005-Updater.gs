@@ -2,7 +2,25 @@
  * ================================================================
  *  コードの自動更新（005-Updater.gs）
  *
- *  ★★★  U001ver  （2026/09/06）  ★★★
+ *  ★★★  U002ver  （2026/09/06）  ★★★
+ *
+ *  [U002ver]
+ *   ・「そうさ」タブを作るのをやめ、「説明」タブに間借りする形にした
+ *     行は insertRowsBefore で差し込むので、もとの中身は消えない
+ *   ・置き場所を決め打ちにするのをやめた
+ *     見出し（▼ チェックを入れると動きます）を目印に、行も列も探す
+ *     更新情報を上に足して行がずれても、動かしても、そのまま動く
+ *   ・どのボタンかを「行の順番」ではなく「書いてある文言」で決めるようにした
+ *     順番で決めていたため、名前と動くものがずれる不具合があった
+ *   ・ボタンの間に空の行があってもよいようにした（押し間違い防止の空行）
+ *   ・結果らんも「結果」と書いてある行を探して、そのすぐ下に書く
+ *     セルが結合されていても、そのまとまりの左上に書く
+ *   ・ボタンはいつも6つ。入れていない機能は押したときに知らせる
+ *   ・重複や読めない行があるときは、こちらでは直さず、直し方だけ知らせる
+ *   ・チェックのらんだけを保護する（説明タブ全体は保護しない）
+ *   ・チェックは文字サイズ50・行の高さ70で置く（スマホで押しやすいように）
+ *
+ *  [U001ver] 最初の版（コードの自動更新／そうさボタン）
  *
  *  ファイル記号: C=001-Code / E=002-Extras / L=003-LineReport
  *               W=004-WebApp / U=005-Updater
@@ -32,7 +50,7 @@
  * ================================================================
  */
 
-const UPD_VERSION = "U001ver";
+const UPD_VERSION = "U002ver";
 
 /** ドライブ上の置き場所（GitHubを使わないときの読み元） */
 const UPD_FOLDER  = "taxi-gas";
@@ -1097,15 +1115,25 @@ function panelRun_(row) {
   }
 }
 
-/** 結果らんに書く */
+/**
+ * 結果らんに書く。
+ * セルが結合されていることがあるので、そのまとまりの左上に書く。
+ * （結合の左上以外に書こうとすると、そこで止まってしまうため）
+ */
 function panelSay_(sh, text) {
   if (!sh) return;
   try {
     const cell = panelResultCell_(sh);
     if (!cell) return;
+    let rg = sh.getRange(cell.row, cell.col);
+    try {
+      if (rg.isPartOfMerge()) {
+        const m = rg.getMergedRanges();
+        if (m && m.length) rg = m[0].getCell(1, 1);
+      }
+    } catch (e) {}
     const now = new Date();
-    sh.getRange(cell.row, cell.col).setValue(
-      pad2_(now.getHours()) + ":" + pad2_(now.getMinutes()) + "  " + text);
+    rg.setValue(pad2_(now.getHours()) + ":" + pad2_(now.getMinutes()) + "  " + text);
     SpreadsheetApp.flush();
   } catch (e) {}
 }

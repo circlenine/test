@@ -97,12 +97,25 @@ let panel;
 function mkPanel() {
   const cells = {};
   const sizes = {};
+  const merges = {};      // 'r,c' → 結合のまとまりの左上 {r,c}
   const prot = [];
+  // 結合セルの左上を返す小さな入れ物
+  function panelCell(r, c) {
+    const C = { setValue: v => { cells[r + ',' + c] = v; return C; },
+                getValue: () => cells[r + ',' + c] };
+    return new Proxy(C, { get: (t, k) => (k in t ? t[k] : () => C) });
+  }
   let protFails = false;
   return {
     _cells: cells,
     _sizes: sizes,
     _prot: prot,
+    // r1..r2 / c1..c2 を1つにまとめる（左上は r1,c1）
+    _merge: (r1, c1, r2, c2) => {
+      for (let r = r1; r <= r2; r++) {
+        for (let c = c1; c <= c2; c++) merges[r + ',' + c] = { r: r1, c: c1 };
+      }
+    },
     _failProtect: v => { protFails = v; },
     getProtections: () => prot.slice(),
 
@@ -193,6 +206,11 @@ function mkPanel() {
             for (let j = 0; j < (nc || 1); j++) delete cells[(r + i) + ',' + (c + j)];
           }
           return px;
+        },
+        isPartOfMerge: () => !!(merges[r + ',' + c]),
+        getMergedRanges: () => {
+          const m = merges[r + ',' + c];
+          return m ? [{ getCell: () => panelCell(m.r, m.c) }] : [];
         },
         setFontSize: v => {
           for (let i = 0; i < (nr || 1); i++) sizes[(r + i) + ',' + c] = v;
@@ -965,6 +983,29 @@ t(miss.length === 2, '2つ足りない');
 F('menuMakePanel')();
 t(F('panelCheck_')(panel).missing.length === 0, '足したのでそろった');
 t(F('panelReadRows_')(panel).length === 6, '6つになった');
+
+console.log('\n■ 結果らんが結合されていても書ける');
+gapLayout();
+// 48〜49行目の B〜H を1つにまとめた（実際のスプシと同じ形）
+panel._merge(48, 2, 49, 8);
+panel._cells['40,2'] = true;
+vm.runInContext('formatRan = 0;', ctx);
+F('panelWatch')();
+t(vm.runInContext('formatRan', ctx) === 1, '動く');
+has(panel._cells['48,2'], '全タブをまとめて整形', '結合のまとまりの左上に書ける');
+
+console.log('\n■ 結果らんの左上でない場所を指しても大丈夫');
+gapLayout();
+panel._merge(47, 2, 49, 8);        // 「結果」ごと結合してしまった場合
+panel._cells['36,2'] = true;
+F('panelWatch')();
+t(true, '結合の中でも落ちない');
+
+console.log('\n■ バージョン');
+t(vm.runInContext('UPD_VERSION', ctx) === 'U002ver', 'U002ver になっている');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuUpdateStatus')();
+has(alerts[0].b, 'U002ver', '状態画面にバージョンが出る');
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

@@ -361,5 +361,79 @@ captured = null; F('doGet')({ parameter: {} });
   ok(p4.store['wbpass'] === 'abc', '次から聞かないように覚えておく');
 }
 
+console.log('\n■ URLをグループLINEに送る');
+{
+  const sent = [];
+  ctx.UrlFetchApp = { fetch: (url, opt) => {
+    if (url.indexOf('/message/push') !== -1) {
+      sent.push(JSON.parse(opt.payload));
+      return { getResponseCode: () => 200, getContentText: () => '{}' };
+    }
+    return { getResponseCode: () => 200, getContentText: () => '{}' };
+  }};
+  ctx.ScriptApp = { getProjectTriggers: () => [],
+    getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/ABC/exec' }) };
+  const props = { LINE_TOKEN: 'tok' };
+  ctx.PropertiesService = { getScriptProperties: () => ({
+    getProperty: k => (k in props ? props[k] : null),
+    setProperty: (k, v) => { props[k] = v; }, deleteProperty: k => { delete props[k]; } })};
+
+  setCfg([]);
+  TABS['説明'] = [];   // グループIDなし
+  has(F('wbSendUrlToLine')(), '送信先が未設定', '送信先が無ければ送らない');
+  ok(sent.length === 0, '全員配信に落ちない');
+
+  // 説明タブのZ1にグループIDが入っている状態にする
+  const info = [];
+  for (let i = 0; i < 3; i++) info.push(new Array(30).fill(''));
+  info[0][25] = 'Cgroup123';        // Z1
+  TABS['説明'] = info;
+  ctx.SpreadsheetApp = Object.assign({}, ctx.SpreadsheetApp, {
+    getActiveSpreadsheet: () => ({
+      getSheetByName: n => {
+        if (n === '説明') return { getRange: () => ({ getValue: () => 'Cgroup123' }) };
+        return TABS[n] ? makeSheet(n, TABS[n]) : null;
+      },
+      toast: () => {}
+    })
+  });
+  vm.runInContext('_cfgCache = null; _cfgVal = {}', ctx);
+
+  has(F('wbSendUrlToLine')(), 'グループLINEに送りました', '送れた');
+  ok(sent.length === 1, '1通だけ送る');
+  ok(sent[0].to === 'Cgroup123', 'グループ宛に送る');
+  has(sent[0].messages[0].text, 'https://script.google.com/macros/s/ABC/exec',
+      'URLがそのまま入る（トーク上でリンクになる）');
+
+  // 合言葉があるときは、合言葉そのものは書かない
+  setCfg([['ページの合言葉', 'himitsu']]);
+  ctx.SpreadsheetApp = Object.assign({}, ctx.SpreadsheetApp, {
+    getActiveSpreadsheet: () => ({
+      getSheetByName: n => {
+        if (n === '説明') return { getRange: () => ({ getValue: () => 'Cgroup123' }) };
+        return TABS[n] ? makeSheet(n, TABS[n]) : null;
+      },
+      toast: () => {}
+    })
+  });
+  vm.runInContext('_cfgCache = null; _cfgVal = {}', ctx);
+  sent.length = 0;
+  F('wbSendUrlToLine')();
+  ok(sent[0].messages[0].text.indexOf('himitsu') === -1,
+     '合言葉そのものはLINEに流さない');
+  has(sent[0].messages[0].text, '合言葉は各自に伝えます', '合言葉があることだけ伝える');
+
+  // トークンが無ければ送らない
+  delete props['LINE_TOKEN'];
+  sent.length = 0;
+  has(F('wbSendUrlToLine')(), 'LINEトークンが未設定', 'トークンが無ければ送らない');
+  ok(sent.length === 0, '送っていない');
+}
+
+console.log('\n■ 鍵の状態のひとこと');
+setCfg([]);                                  has(F('wbLockText_')(), '鍵なし', '設定が空なら鍵なし');
+setCfg([['ページの合言葉', 'x']]);            has(F('wbLockText_')(), '合言葉あり', '合言葉あり');
+setCfg([['ページを見られるメール', 'a@b.c']]); has(F('wbLockText_')(), 'デプロイ設定', 'メール制限だけだと注意が出る');
+
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

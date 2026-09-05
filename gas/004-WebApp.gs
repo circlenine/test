@@ -2,11 +2,14 @@
  * ================================================================
  *  みんなの記録ページ（004-WebApp.gs）
  *
- *  ★★★  W002ver  （2026/09/06）  ★★★
+ *  ★★★  W003ver  （2026/09/06）  ★★★
  *
  *  ファイル記号: C=001-Code.gs / E=002-Extras.gs / L=003-LineReport.gs / W=004-WebApp.gs
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *
+ *  [W003ver] URLの出し方を直した
+ *   ・リンクとして押せる／コピーボタンつきの画面にした（前は文字だけで触れなかった）
+ *   ・「このURLをグループLINEに送る」ボタンを付けた。トーク上ではリンクになる
  *  [W002ver] 鍵をかけられるようにした（設定タブの「ページを見られるメール」「ページの合言葉」）
  *   ・合言葉は一度入れれば、その端末では次から聞かない
  *   ・鍵がかかっているあいだは、記録を1件もページに渡さない
@@ -20,7 +23,7 @@
  * ================================================================
  */
 
-const WB_VERSION = "W002ver";
+const WB_VERSION = "W003ver";
 
 /** 何日ぶんを持っていくか。古い記録まで全部見たいときは URL に ?all=1 を付ける */
 const WB_DAYS = 190;
@@ -122,11 +125,34 @@ function wbGate_() {
   return { mode: "ok" };
 }
 
-/** ページのURLを出す（メニューから見られるように） */
+/** 公開されているページのURL。まだなら空 */
+function wbUrl_() {
+  try { return ScriptApp.getService().getUrl() || ""; } catch (e) { return ""; }
+}
+
+/** いまの鍵の状態を、ひとことで */
+function wbLockText_() {
+  const g = wbGate_();
+  if (g.mode === "pass")  return "🔒 合言葉あり";
+  if (g.mode === "setup") return "⚠️ メール制限を入れていますが、デプロイ設定が合っていません";
+  if (g.mode === "deny" || g.mode === "ok") {
+    const em = String(wbCfg_("ページを見られるメール", "")).trim();
+    const pw = String(wbCfg_("ページの合言葉", "")).trim();
+    if (em) return "🔒 メールで制限中";
+    if (pw) return "🔒 合言葉あり";
+  }
+  return "🔓 鍵なし（URLを知っている人は誰でも見られます）";
+}
+
+/**
+ * ページのURLを出す。
+ * 前は ui.alert に文字で出していたが、それだとコピーもタップもできなかった。
+ * リンクとコピーボタンを置いた画面にする。
+ */
 function menuWebAppUrl() {
   const ui = SpreadsheetApp.getUi();
-  let url = "";
-  try { url = ScriptApp.getService().getUrl(); } catch (e) {}
+  const url = wbUrl_();
+
   if (!url) {
     ui.alert("📱 みんなの記録ページ",
       "まだ公開されていません。\n\n" +
@@ -138,17 +164,92 @@ function menuWebAppUrl() {
       "で公開すると、ここにURLが出ます。", ui.ButtonSet.OK);
     return;
   }
-  const g = wbGate_();
-  const lock = (g.mode === "ok")
-    ? "🔓 いまは鍵なし（URLを知っている人は誰でも見られます）"
-    : (g.mode === "pass" ? "🔒 合言葉あり"
-      : (g.mode === "setup" ? "⚠️ メール制限を入れていますが、デプロイ設定が合っていません"
-      : "🔒 メールで制限中"));
-  ui.alert("📱 みんなの記録ページ",
-    "このURLをLINEグループに貼ってください。\n\n" + url +
-    "\n\n" + lock +
-    "\n\n古い記録まで全部見たいときは、うしろに ?all=1 を付けます。",
-    ui.ButtonSet.OK);
+
+  const lock = wbLockText_();
+  const html =
+    '<style>' +
+    'body{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;' +
+      'font-size:13px;padding:14px;margin:0;color:#202124}' +
+    'a.u{display:block;word-break:break-all;background:#e8f0fe;border:1px solid #c6dafc;' +
+      'border-radius:10px;padding:12px;color:#1155cc;text-decoration:none;font-size:12px;' +
+      'line-height:1.6}' +
+    'button{width:100%;margin-top:9px;border:0;border-radius:10px;padding:12px;' +
+      'font-size:14px;font-weight:700;color:#fff;background:#1a73e8}' +
+    'button.g{background:#06c755}button.w{background:#5f6368}' +
+    '.lock{background:#f1f3f4;border-radius:9px;padding:9px 11px;margin:11px 0;font-size:12px}' +
+    '.ok{color:#188038;font-weight:700;min-height:18px;margin-top:8px;text-align:center}' +
+    '.note{color:#5f6368;font-size:11px;margin-top:11px;line-height:1.7}' +
+    '</style>' +
+    '<a class="u" href="' + wbEsc_(url) + '" target="_blank" rel="noopener">' +
+      wbEsc_(url) + '</a>' +
+    '<button onclick="cp()">📋 URLをコピー</button>' +
+    '<button class="g" onclick="toLine()">💬 このURLをグループLINEに送る</button>' +
+    '<div class="ok" id="ok"></div>' +
+    '<div class="lock">' + wbEsc_(lock) + '</div>' +
+    '<div class="note">・上のURLをタップすると、別のタブで開きます。<br>' +
+      '・古い記録まで全部見たいときは、うしろに <b>?all=1</b> を付けます。<br>' +
+      '・エラーが出るときは、Apps Script で「デプロイ」→「デプロイを管理」→ 鉛筆 →' +
+      ' バージョン「新バージョン」→ デプロイ、をしてください。' +
+      'ファイルを足したあとは、これをしないと反映されません。</div>' +
+    '<script>' +
+    'var U=' + JSON.stringify(url) + ';' +
+    'function say(t){document.getElementById("ok").textContent=t;}' +
+    'function cp(){' +
+      'if(navigator.clipboard&&navigator.clipboard.writeText){' +
+        'navigator.clipboard.writeText(U).then(function(){say("コピーしました");},' +
+        'function(){fb();});}else{fb();}}' +
+    'function fb(){var t=document.createElement("textarea");t.value=U;document.body.appendChild(t);' +
+      't.select();try{document.execCommand("copy");say("コピーしました");}' +
+      'catch(e){say("コピーできませんでした。URLを長押しして選んでください");}' +
+      'document.body.removeChild(t);}' +
+    'function toLine(){say("送信中…");' +
+      'google.script.run.withSuccessHandler(function(m){say(m);})' +
+      '.withFailureHandler(function(e){say("送れませんでした："+(e&&e.message?e.message:e));})' +
+      '.wbSendUrlToLine();}' +
+    '</script>';
+
+  ui.showModalDialog(
+    HtmlService.createHtmlOutput(html).setWidth(400).setHeight(430),
+    "📱 みんなの記録ページ");
+}
+
+function wbEsc_(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                  .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/**
+ * ページのURLをグループLINEに送る。
+ * LINEのトーク上ではリンクになるので、みんなタップするだけで開ける。
+ */
+function wbSendUrlToLine() {
+  const url = wbUrl_();
+  if (!url) return "まだ公開されていません";
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const info = ss.getSheetByName("説明");
+  const to = info ? String(info.getRange("Z1").getValue() || "").trim() : "";
+  if (!to) {
+    // 送信先が無いときに全員配信へ落ちないよう、ここで止める
+    return "送信先が未設定です（メニュー「👥 グループIDを設定」）";
+  }
+  const token = PropertiesService.getScriptProperties().getProperty("LINE_TOKEN") || "";
+  if (!token) return "LINEトークンが未設定です（メニュー「🔑 LINEトークンを設定」）";
+
+  const pass = String(wbCfg_("ページの合言葉", "")).trim();
+  const text = "📱 みんなの記録ページ\n" + url +
+    (pass ? "\n\n合言葉は各自に伝えます（このメッセージには書きません）" : "");
+
+  const res = UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
+    method: "post",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+    payload: JSON.stringify({ to: to, messages: [{ type: "text", text: text }] }),
+    muteHttpExceptions: true
+  });
+  if (res.getResponseCode() !== 200) {
+    return "送れませんでした（" + res.getResponseCode() + "）";
+  }
+  return "グループLINEに送りました";
 }
 
 /* ============ 記録を集める ============ */

@@ -9,7 +9,7 @@
 | **C** | `001-Code.gs`（統合スクリプト） | C019ver | `001-Code` |
 | **E** | `002-Extras.gs` | E004ver | `002-Extras` |
 | **L** | `003-LineReport.gs` | L005ver | `003-LineReport` |
-| **W** | `004-WebApp.gs`（みんなの記録ページ） | W002ver | `004-WebApp` |
+| **W** | `004-WebApp.gs`（みんなの記録ページ） | W003ver | `004-WebApp` |
 
 **貼るのはこの4つだけ。** 番号の順に並ぶので、上から順に貼っていけば漏れない。
 `gas/parts/` の中は、`002-Extras.gs` を組み立てるための材料なので貼らなくてよい。

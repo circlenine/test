@@ -2,11 +2,14 @@
  * ================================================================
  *  みんなの記録ページ（004-WebApp.gs）
  *
- *  ★★★  W001ver  （2026/09/06）  ★★★
+ *  ★★★  W002ver  （2026/09/06）  ★★★
  *
  *  ファイル記号: C=001-Code.gs / E=002-Extras.gs / L=003-LineReport.gs / W=004-WebApp.gs
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *
+ *  [W002ver] 鍵をかけられるようにした（設定タブの「ページを見られるメール」「ページの合言葉」）
+ *   ・合言葉は一度入れれば、その端末では次から聞かない
+ *   ・鍵がかかっているあいだは、記録を1件もページに渡さない
  *  [W001ver] みんなの記録ページ（ウェブアプリ）の最初の版
  *   ・📊 立ち回り … 時間帯別／曜日区分別の平均、乗り場ランキング、ロングマップ
  *   ・📋 記録     … 日別のカード表示（オプチャも色分けして混ぜる）
@@ -17,7 +20,7 @@
  * ================================================================
  */
 
-const WB_VERSION = "W001ver";
+const WB_VERSION = "W002ver";
 
 /** 何日ぶんを持っていくか。古い記録まで全部見たいときは URL に ?all=1 を付ける */
 const WB_DAYS = 190;
@@ -25,12 +28,19 @@ const WB_DAYS = 190;
 /** ブラウザからページを開いたとき */
 function doGet(e) {
   const all = !!(e && e.parameter && e.parameter.all);
+  const gate = wbGate_();
+
   let data;
-  try {
-    data = wbCollect_(all);
-  } catch (err) {
-    data = { ok: false, error: (err && err.message) || String(err) };
-    try { logErr_("webapp", err); } catch (e2) {}
+  if (gate.mode !== "ok") {
+    // 見せてよい相手か決まるまで、記録は1件も渡さない
+    data = { ok: false, gate: gate.mode, error: gate.msg, who: gate.who || "" };
+  } else {
+    try {
+      data = wbCollect_(all);
+    } catch (err) {
+      data = { ok: false, error: (err && err.message) || String(err) };
+      try { logErr_("webapp", err); } catch (e2) {}
+    }
   }
 
   // < を逃がしておく。乗り場名などに </script> が混ざってもページが壊れないように
@@ -42,6 +52,74 @@ function doGet(e) {
     .setTitle("僕はグールだ｜みんなの記録")
     .addMetaTag("viewport", "width=device-width, initial-scale=1, viewport-fit=cover")
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * 合言葉を入れてもらったときに、ページから呼ばれる。
+ * 合っていれば記録を返す。合っていなければ何も返さない。
+ */
+function wbFetch(code, all) {
+  const pass = String(wbCfg_("ページの合言葉", "")).trim();
+  if (!pass) return JSON.stringify({ ok: false, error: "合言葉は設定されていません" });
+  if (String(code || "").trim() !== pass) {
+    return JSON.stringify({ ok: false, gate: "pass", error: "合言葉がちがいます" });
+  }
+  try {
+    return JSON.stringify(wbCollect_(!!all));
+  } catch (err) {
+    try { logErr_("webapp", err); } catch (e2) {}
+    return JSON.stringify({ ok: false, error: (err && err.message) || String(err) });
+  }
+}
+
+/** 「設定」タブの値。001-Code.gs が無いときのために既定値も受け取る */
+function wbCfg_(key, def) {
+  try {
+    if (typeof cfg_ === "function") {
+      const v = cfg_(key);
+      return (v === undefined || v === null) ? def : v;
+    }
+  } catch (e) {}
+  return def;
+}
+
+/**
+ * 見せてよい相手かを決める。
+ *   ok    … 見せる
+ *   pass  … 合言葉を聞く
+ *   deny  … このメールは許していない
+ *   setup … メールで制限したいのに、デプロイの設定がそれに向いていない
+ *
+ * メールでの制限は、デプロイの「実行するユーザー」を
+ * 「ウェブアプリにアクセスしているユーザー」にしていないと、
+ * 相手のメールが取れないので効かない。そのときは合言葉に切り替える。
+ */
+function wbGate_() {
+  const emails = String(wbCfg_("ページを見られるメール", "")).trim();
+  const pass   = String(wbCfg_("ページの合言葉", "")).trim();
+  if (!emails && !pass) return { mode: "ok" };            // 鍵なし
+
+  if (emails) {
+    const allow = emails.split(/[,、\s]+/)
+      .map(function (x) { return x.trim().toLowerCase(); })
+      .filter(String);
+    let who = "";
+    try { who = String(Session.getActiveUser().getEmail() || "").toLowerCase(); } catch (e) {}
+
+    if (who) {
+      if (allow.indexOf(who) !== -1) return { mode: "ok" };
+      return { mode: "deny", who: who,
+               msg: "このアカウントでは開けません。管理者に連絡してください。" };
+    }
+    // メールが取れなかった
+    if (!pass) {
+      return { mode: "setup",
+               msg: "メールでの制限を効かせるには、デプロイの設定を直す必要があります。" };
+    }
+  }
+
+  if (pass) return { mode: "pass", msg: "合言葉を入れてください" };
+  return { mode: "ok" };
 }
 
 /** ページのURLを出す（メニューから見られるように） */
@@ -60,8 +138,15 @@ function menuWebAppUrl() {
       "で公開すると、ここにURLが出ます。", ui.ButtonSet.OK);
     return;
   }
+  const g = wbGate_();
+  const lock = (g.mode === "ok")
+    ? "🔓 いまは鍵なし（URLを知っている人は誰でも見られます）"
+    : (g.mode === "pass" ? "🔒 合言葉あり"
+      : (g.mode === "setup" ? "⚠️ メール制限を入れていますが、デプロイ設定が合っていません"
+      : "🔒 メールで制限中"));
   ui.alert("📱 みんなの記録ページ",
     "このURLをLINEグループに貼ってください。\n\n" + url +
+    "\n\n" + lock +
     "\n\n古い記録まで全部見たいときは、うしろに ?all=1 を付けます。",
     ui.ButtonSet.OK);
 }
@@ -331,6 +416,18 @@ nav button.on{color:var(--blue)}
 .note{font-size:11px;color:var(--dim2);margin-top:9px}
 .err{background:#3f1d1d;border:1px solid #7f1d1d;border-radius:12px;padding:13px;
   color:#fecaca;font-size:13px}
+
+/* --- 合言葉 --- */
+.gate{max-width:340px;margin:16vh auto 0;text-align:center;padding:0 20px}
+.gate .ic{font-size:40px}
+.gate h1{font-size:17px;margin:14px 0 6px}
+.gate p{font-size:12px;color:var(--dim2);margin:0 0 18px;line-height:1.7}
+.gate input{width:100%;background:var(--card);border:1px solid var(--line);
+  color:var(--fg);border-radius:11px;padding:13px;font-size:16px;text-align:center;
+  letter-spacing:.12em}
+.gate button{width:100%;margin-top:10px;background:var(--blue);border:0;color:#04202e;
+  border-radius:11px;padding:13px;font-size:15px;font-weight:800}
+.gate .ng{color:#fca5a5;font-size:12px;margin-top:11px;min-height:18px}
 </style></head><body>
 
 <header>
@@ -366,27 +463,117 @@ const WD = ['日','月','火','水','木','金','土'];
 const dObj = s => { const p = String(s).split('-'); return new Date(+p[0], +p[1]-1, +p[2]); };
 const dLabel = s => { const d = dObj(s);
   return (d.getMonth()+1) + '/' + d.getDate() + '(' + WD[d.getDay()] + ')'; };
-const band = m => m >= DATA.longMin ? 'l' : (m > DATA.shortMax ? 'm' : 's');
+const band = m => m >= D.longMin ? 'l' : (m > D.shortMax ? 'm' : 's');
 const bandName = { l:'ロング', m:'ミドル', s:'ショート' };
 const slotLabel = s => (s < 24 ? s : s - 24) + '時';
 
 /* ---------- 起動 ---------- */
+let D = DATA;          // 合言葉で読み直したときは、こちらが入れ替わる
+
 function boot() {
-  if (!DATA || !DATA.ok) {
-    document.getElementById('view').innerHTML =
-      '<div class="err">記録を読み込めませんでした。<br>' +
-      esc((DATA && DATA.error) || '原因不明') + '</div>';
-    return;
-  }
-  document.getElementById('stamp').textContent = DATA.updated;
+  if (D && D.ok) return start();
+
+  const g = D && D.gate;
+  if (g === 'pass')  return askPass();
+  if (g === 'deny')  return gateMsg('🚫', '開けません',
+    'ログイン中のアカウント：' + esc(D.who || '不明') + '<br>' +
+    'このアカウントは許可されていません。<br>別のアカウントで開くか、管理者に連絡してください。');
+  if (g === 'setup') return gateMsg('⚠️', '設定が足りません',
+    'メールでの制限を効かせるには、Apps Script の<br>' +
+    '「デプロイを管理」→ 実行するユーザー を<br>' +
+    '<b>ウェブアプリにアクセスしているユーザー</b><br>に変えてください。<br><br>' +
+    'かんたんに済ませたい場合は、設定タブの<br><b>ページの合言葉</b>を使ってください。');
+
+  document.getElementById('view').innerHTML =
+    '<div class="err">記録を読み込めませんでした。<br>' +
+    esc((D && D.error) || '原因不明') + '</div>';
+}
+
+/** 上のバーと下のタブを隠して、案内だけ出す */
+function gateOnly(html) {
+  document.querySelector('header').style.display = 'none';
+  document.querySelector('nav').style.display = 'none';
+  document.querySelectorAll('.filters, .chips').forEach(function (el) {
+    el.style.display = 'none';
+  });
+  document.getElementById('view').innerHTML = html;
+}
+function gateMsg(ic, title, body) {
+  gateOnly('<div class="gate"><div class="ic">' + ic + '</div><h1>' + title + '</h1>' +
+           '<p>' + body + '</p></div>');
+}
+
+/** 合言葉を聞く。一度通れば、その端末では覚えておく */
+function askPass() {
+  gateOnly('<div class="gate"><div class="ic">🔒</div>' +
+    '<h1>みんなの記録</h1>' +
+    '<p>合言葉を入れてください。<br>一度入れれば、この端末では次から聞きません。</p>' +
+    '<input id="pw" type="password" inputmode="text" autocomplete="off" placeholder="合言葉">' +
+    '<button id="go">開く</button><div class="ng" id="ng"></div></div>');
+
+  const box = document.getElementById('pw');
+  const btn = document.getElementById('go');
+  const send = function () {
+    const v = (box.value || '').trim();
+    if (!v) return;
+    btn.disabled = true; btn.textContent = '確認中…';
+    document.getElementById('ng').textContent = '';
+    tryPass(v, false);
+  };
+  btn.onclick = send;
+  box.onkeydown = function (ev) { if (ev.key === 'Enter') send(); };
+
+  // 前に通った合言葉があれば、黙って試す
+  let saved = '';
+  try { saved = localStorage.getItem('wbpass') || ''; } catch (e) {}
+  if (saved) { btn.disabled = true; btn.textContent = '確認中…'; tryPass(saved, true); }
+  else { try { box.focus(); } catch (e) {} }
+}
+
+function tryPass(code, quiet) {
+  google.script.run
+    .withSuccessHandler(function (txt) {
+      let r = null;
+      try { r = JSON.parse(txt); } catch (e) {}
+      if (r && r.ok) {
+        try { localStorage.setItem('wbpass', code); } catch (e) {}
+        D = r;
+        document.querySelector('header').style.display = '';
+        document.querySelector('nav').style.display = '';
+        document.querySelectorAll('.filters, .chips').forEach(function (el) {
+          el.style.display = '';
+        });
+        start();
+        return;
+      }
+      // 合わなかった。覚えていたものが古いだけなら、消してもう一度聞く
+      try { localStorage.removeItem('wbpass'); } catch (e) {}
+      if (quiet) { askPass(); return; }
+      const b = document.getElementById('go');
+      if (b) { b.disabled = false; b.textContent = '開く'; }
+      const ng = document.getElementById('ng');
+      if (ng) ng.textContent = (r && r.error) || '開けませんでした';
+    })
+    .withFailureHandler(function (err) {
+      const b = document.getElementById('go');
+      if (b) { b.disabled = false; b.textContent = '開く'; }
+      const ng = document.getElementById('ng');
+      if (ng) ng.textContent = '通信できませんでした：' + (err && err.message ? err.message : err);
+    })
+    .wbFetch(code, false);
+}
+
+/* ---------- 中身を組み立てる ---------- */
+function start() {
+  document.getElementById('stamp').textContent = D.updated;
 
   const ps = document.getElementById('period');
-  ps.innerHTML = DATA.periods.map((p, i) =>
+  ps.innerHTML = D.periods.map((p, i) =>
     '<option value="' + i + '">' + esc(p.label) + '</option>').join('');
 
   document.getElementById('member').innerHTML =
     '<option value="">全員</option>' +
-    DATA.members.map(m => '<option value="' + esc(m) + '">' + esc(m) + '</option>').join('');
+    D.members.map(m => '<option value="' + esc(m) + '">' + esc(m) + '</option>').join('');
 
   document.getElementById('dayChips').innerHTML =
     ['全部','平日','金曜','土曜','日祝'].map(d =>
@@ -413,12 +600,12 @@ function go(t) {
 
 /* ---------- 絞り込み ---------- */
 function pick() {
-  const p = DATA.periods[+document.getElementById('period').value] || DATA.periods[0];
+  const p = D.periods[+document.getElementById('period').value] || D.periods[0];
   const mem = document.getElementById('member').value;
   const f = r => r.d >= p.from && r.d <= p.to
     && (tab === 'b' || dayType === '全部' || r.y === dayType);
-  const own = DATA.own.filter(r => f(r) && (!mem || r.w === mem));
-  const opu = DATA.opu.filter(f);
+  const own = D.own.filter(r => f(r) && (!mem || r.w === mem));
+  const opu = D.opu.filter(f);
   return { p: p, own: own, opu: opu, mem: mem };
 }
 
@@ -554,7 +741,7 @@ function longMapCard(rows, opuTotal) {
     '</div></div>').join('');
 
   return '<div class="card orange"><div class="chead"><b>🗺 ロングマップ</b>' +
-    '<span class="sub">￥' + DATA.longMin.toLocaleString() + '以上・オプチャ込み</span>' +
+    '<span class="sub">￥' + D.longMin.toLocaleString() + '以上・オプチャ込み</span>' +
     '<span class="badge">ロング<br><i>' + rows.length + '件</i></span></div>' +
     '<div class="rank">' + html + '</div>' +
     '<div class="note">オプチャ情報 ' + opuTotal + '件を含めた件数分布です。' +
@@ -602,7 +789,7 @@ function rideCard(r) {
 
 /* ===== ③ ランキング ===== */
 function viewC(s) {
-  const rows = DATA.own.filter(r => r.d >= s.p.from && r.d <= s.p.to
+  const rows = D.own.filter(r => r.d >= s.p.from && r.d <= s.p.to
     && (dayType === '全部' || r.y === dayType));
   if (!rows.length) return empty('この期間の記録がありません');
 

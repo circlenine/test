@@ -21,12 +21,19 @@ const WB_DAYS = 190;
 /** ブラウザからページを開いたとき */
 function doGet(e) {
   const all = !!(e && e.parameter && e.parameter.all);
+  const gate = wbGate_();
+
   let data;
-  try {
-    data = wbCollect_(all);
-  } catch (err) {
-    data = { ok: false, error: (err && err.message) || String(err) };
-    try { logErr_("webapp", err); } catch (e2) {}
+  if (gate.mode !== "ok") {
+    // 見せてよい相手か決まるまで、記録は1件も渡さない
+    data = { ok: false, gate: gate.mode, error: gate.msg, who: gate.who || "" };
+  } else {
+    try {
+      data = wbCollect_(all);
+    } catch (err) {
+      data = { ok: false, error: (err && err.message) || String(err) };
+      try { logErr_("webapp", err); } catch (e2) {}
+    }
   }
 
   // < を逃がしておく。乗り場名などに </script> が混ざってもページが壊れないように
@@ -38,6 +45,74 @@ function doGet(e) {
     .setTitle("僕はグールだ｜みんなの記録")
     .addMetaTag("viewport", "width=device-width, initial-scale=1, viewport-fit=cover")
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * 合言葉を入れてもらったときに、ページから呼ばれる。
+ * 合っていれば記録を返す。合っていなければ何も返さない。
+ */
+function wbFetch(code, all) {
+  const pass = String(wbCfg_("ページの合言葉", "")).trim();
+  if (!pass) return JSON.stringify({ ok: false, error: "合言葉は設定されていません" });
+  if (String(code || "").trim() !== pass) {
+    return JSON.stringify({ ok: false, gate: "pass", error: "合言葉がちがいます" });
+  }
+  try {
+    return JSON.stringify(wbCollect_(!!all));
+  } catch (err) {
+    try { logErr_("webapp", err); } catch (e2) {}
+    return JSON.stringify({ ok: false, error: (err && err.message) || String(err) });
+  }
+}
+
+/** 「設定」タブの値。001-Code.gs が無いときのために既定値も受け取る */
+function wbCfg_(key, def) {
+  try {
+    if (typeof cfg_ === "function") {
+      const v = cfg_(key);
+      return (v === undefined || v === null) ? def : v;
+    }
+  } catch (e) {}
+  return def;
+}
+
+/**
+ * 見せてよい相手かを決める。
+ *   ok    … 見せる
+ *   pass  … 合言葉を聞く
+ *   deny  … このメールは許していない
+ *   setup … メールで制限したいのに、デプロイの設定がそれに向いていない
+ *
+ * メールでの制限は、デプロイの「実行するユーザー」を
+ * 「ウェブアプリにアクセスしているユーザー」にしていないと、
+ * 相手のメールが取れないので効かない。そのときは合言葉に切り替える。
+ */
+function wbGate_() {
+  const emails = String(wbCfg_("ページを見られるメール", "")).trim();
+  const pass   = String(wbCfg_("ページの合言葉", "")).trim();
+  if (!emails && !pass) return { mode: "ok" };            // 鍵なし
+
+  if (emails) {
+    const allow = emails.split(/[,、\s]+/)
+      .map(function (x) { return x.trim().toLowerCase(); })
+      .filter(String);
+    let who = "";
+    try { who = String(Session.getActiveUser().getEmail() || "").toLowerCase(); } catch (e) {}
+
+    if (who) {
+      if (allow.indexOf(who) !== -1) return { mode: "ok" };
+      return { mode: "deny", who: who,
+               msg: "このアカウントでは開けません。管理者に連絡してください。" };
+    }
+    // メールが取れなかった
+    if (!pass) {
+      return { mode: "setup",
+               msg: "メールでの制限を効かせるには、デプロイの設定を直す必要があります。" };
+    }
+  }
+
+  if (pass) return { mode: "pass", msg: "合言葉を入れてください" };
+  return { mode: "ok" };
 }
 
 /** ページのURLを出す（メニューから見られるように） */
@@ -56,8 +131,15 @@ function menuWebAppUrl() {
       "で公開すると、ここにURLが出ます。", ui.ButtonSet.OK);
     return;
   }
+  const g = wbGate_();
+  const lock = (g.mode === "ok")
+    ? "🔓 いまは鍵なし（URLを知っている人は誰でも見られます）"
+    : (g.mode === "pass" ? "🔒 合言葉あり"
+      : (g.mode === "setup" ? "⚠️ メール制限を入れていますが、デプロイ設定が合っていません"
+      : "🔒 メールで制限中"));
   ui.alert("📱 みんなの記録ページ",
     "このURLをLINEグループに貼ってください。\n\n" + url +
+    "\n\n" + lock +
     "\n\n古い記録まで全部見たいときは、うしろに ?all=1 を付けます。",
     ui.ButtonSet.OK);
 }

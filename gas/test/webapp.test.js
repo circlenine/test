@@ -159,27 +159,48 @@ console.log('\n■ ページが実際に描けるか（偽のブラウザで動�
 
 // 最低限の偽DOM。innerHTML を受け取れればよい
 function fakeEl(id) {
-  return { id: id, innerHTML: '', textContent: '', value: '',
-           style: {}, dataset: {}, classList: { toggle(){}, add(){}, remove(){} } };
+  return { id: id, innerHTML: '', textContent: '', value: '', disabled: false,
+           style: {}, dataset: {}, classList: { toggle(){}, add(){}, remove(){} },
+           onclick: null, onkeydown: null, focus(){} };
 }
-function runPage(html) {
+function runPage(html, onFetch) {
   const els = {};
+  const store = {};
   const get = id => (els[id] = els[id] || fakeEl(id));
+  const stub = fakeEl('stub');
   const pctx = {
     console,
     document: {
       getElementById: get,
+      querySelector: () => stub,
       querySelectorAll: () => []
     },
     window: { scrollTo() {} },
-    location: { reload() {} }
+    location: { reload() {} },
+    localStorage: {
+      getItem: k => (k in store ? store[k] : null),
+      setItem: (k, v) => { store[k] = String(v); },
+      removeItem: k => { delete store[k]; }
+    },
+    google: { script: { run: (function () {
+      let okH = null, ngH = null;
+      const api = {
+        withSuccessHandler(f) { okH = f; return api; },
+        withFailureHandler(f) { ngH = f; return api; },
+        wbFetch(code) {
+          try { okH(onFetch ? onFetch(code) : '{}'); }
+          catch (e) { if (ngH) ngH(e); }
+        }
+      };
+      return api;
+    })() } }
   };
   pctx.window.document = pctx.document;
   vm.createContext(pctx);
   const m = html.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
   if (!m) throw new Error('ページのスクリプトが見つかりません');
   vm.runInContext(m[1], pctx, { filename: 'webapp.html' });
-  return { els: els, ctx: pctx };
+  return { els: els, ctx: pctx, store: store };
 }
 
 reset();
@@ -245,6 +266,99 @@ console.log('\n■ 読み込みに失敗したときの表示');
     JSON.stringify({ ok: false, error: 'わざと失敗' }));
   const p3 = runPage(html);
   has(p3.els['view'].innerHTML, 'わざと失敗', '原因がそのまま出る');
+}
+
+
+/* ============ 鍵をかける ============ */
+function setCfg(list) {
+  reset();
+  TABS['設定'] = [['', '項目', '値', '']].concat(
+    list.map(([k, v]) => ['', k, v, '']));
+  vm.runInContext('_cfgCache = null; _cfgVal = {}', ctx);
+}
+// 「設定」タブは1行目から始まるので、偽シートもそれに合わせる
+const realMake = makeSheet;
+makeSheet = function (name, rows) {
+  const base = (name === '設定') ? 1 : 4;
+  return {
+    getName: () => name,
+    getLastRow: () => base - 1 + rows.length,
+    getMaxRows: () => 1000,
+    getRange: (r, c, nr, nc) => ({
+      getValues: () => rows.slice(r - base, r - base + (nr || 1))
+                           .map(x => x.slice(c - 1, c - 1 + (nc || 1))),
+      setValues: () => {}, setValue: () => {}, getValue: () => ''
+    })
+  };
+};
+
+console.log('\n■ 鍵なし（今までどおり）');
+setCfg([]);
+TABS['ﾀﾞｲｽｹ'] = [row('ﾀﾞｲｽｹ', Y, M, D, '23:10', 12000, '新地4')];
+ok(F('wbGate_')().mode === 'ok', '設定が空なら誰でも見られる');
+captured = null; F('doGet')({ parameter: {} });
+has(captured, '新地4', '記録がページに入る');
+
+console.log('\n■ 合言葉');
+setCfg([['ページの合言葉', 'gooru2026']]);
+TABS['ﾀﾞｲｽｹ'] = [row('ﾀﾞｲｽｹ', Y, M, D, '23:10', 12000, '新地4')];
+ok(F('wbGate_')().mode === 'pass', '合言葉を聞く状態になる');
+captured = null; F('doGet')({ parameter: {} });
+ok(captured.indexOf('新地4') === -1, '合言葉を入れる前は、記録を1件も渡さない');
+has(captured, '"gate":"pass"', 'ページに「合言葉を聞け」と伝える');
+ok(captured.indexOf('gooru2026') === -1, '合言葉そのものはページに出さない');
+
+let r1 = JSON.parse(F('wbFetch')('gooru2026', false));
+ok(r1.ok === true, '合っていれば記録が返る');
+has(JSON.stringify(r1), '新地4', '中身も入っている');
+let r2 = JSON.parse(F('wbFetch')('ちがう', false));
+ok(r2.ok === false, 'ちがえば返らない');
+ok(JSON.stringify(r2).indexOf('新地4') === -1, 'ちがうときは記録が1件も混ざらない');
+has(r2.error, 'ちがいます', '理由が返る');
+ok(JSON.parse(F('wbFetch')('', false)).ok === false, '空でも通らない');
+ok(JSON.parse(F('wbFetch')('GOORU2026', false)).ok === false, '大文字小文字は区別する');
+
+console.log('\n■ メールで制限');
+// 相手のメールが取れる場合（デプロイを「アクセスしているユーザー」にしたとき）
+let visitor = 'mark@example.com';
+ctx.Session = { getScriptTimeZone: () => 'Asia/Tokyo',
+                getActiveUser: () => ({ getEmail: () => visitor }) };
+setCfg([['ページを見られるメール', 'mark@example.com, daisuke@example.com']]);
+TABS['ﾀﾞｲｽｹ'] = [row('ﾀﾞｲｽｹ', Y, M, D, '23:10', 12000, '新地4')];
+ok(F('wbGate_')().mode === 'ok', '許したメールなら見られる');
+visitor = 'DAISUKE@Example.com';
+ok(F('wbGate_')().mode === 'ok', '大文字小文字はそろえて比べる');
+visitor = 'stranger@example.com';
+ok(F('wbGate_')().mode === 'deny', '知らないメールは断る');
+captured = null; F('doGet')({ parameter: {} });
+ok(captured.indexOf('新地4') === -1, '断るときは記録を1件も渡さない');
+has(captured, 'stranger@example.com', '誰でログインしているかは伝える');
+
+console.log('\n■ メールが取れないとき');
+visitor = '';
+setCfg([['ページを見られるメール', 'mark@example.com']]);
+ok(F('wbGate_')().mode === 'setup', 'デプロイ設定を直すよう促す');
+setCfg([['ページを見られるメール', 'mark@example.com'], ['ページの合言葉', 'abc']]);
+ok(F('wbGate_')().mode === 'pass', '合言葉があれば、そちらに切り替わる');
+
+console.log('\n■ 鍵がかかっているときのページ表示');
+setCfg([['ページの合言葉', 'abc']]);
+TABS['ﾀﾞｲｽｹ'] = [row('ﾀﾞｲｽｹ', Y, M, D, '23:10', 12000, '新地4')];
+captured = null; F('doGet')({ parameter: {} });
+{
+  let asked = null;
+  const p4 = runPage(captured, function (code) { asked = code;
+    return JSON.stringify({ ok: true, updated: 'いま', shortMax: 4999, longMin: 10000,
+      members: ['ﾀﾞｲｽｹ'], periods: [{ from: '2000-01-01', to: '2099-12-31', label: 'ぜんぶ' }],
+      own: [{ w:'ﾀﾞｲｽｹ', d:'2026-09-04', t:'23:10', m:12000, p:'新地4', o:'', k:'', wt:null,
+              y:'平日', s:23 }], opu: [] }); });
+  has(p4.els['view'].innerHTML, '合言葉', '合言葉の画面が出る');
+  ok(p4.els['view'].innerHTML.indexOf('新地4') === -1, 'この時点では記録が出ていない');
+  p4.els['pw'].value = 'abc';
+  p4.els['go'].onclick();
+  ok(asked === 'abc', '入れた合言葉が送られる');
+  has(p4.els['view'].innerHTML, '新地4', '通ったら記録が出る');
+  ok(p4.store['wbpass'] === 'abc', '次から聞かないように覚えておく');
 }
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');

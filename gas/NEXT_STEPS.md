@@ -208,3 +208,56 @@ URLは変わらない。
 - レポートの赤いボタンの行き先を、スプシからこのページに変える
 - 待ち時間あたりの効率（￥/h）を立ち回りタブに出す
 - 読み込みが遅いと感じたら、静的サイト方式（GitHub Pages）へ移す
+
+---
+
+## コードの自動更新（005-Updater.gs / U001ver）
+
+貼り替えをなくす仕組み。メニューのボタン1つで、
+GitHub（またはGoogleドライブ）から新しいコードを読んで、自分自身を書き換える。
+ウェブアプリのデプロイもやり直すので、ページも同時に最新になる。
+
+### 最初の1回だけ（ここだけ手作業）
+
+1. ブラウザで `script.google.com/home/usersettings` を開き、
+   **「Google Apps Script API」を ON**
+2. Apps Script に `005-Updater` を新規ファイルとして追加し、貼る
+3. `001-Code` を貼り替える（メニューを出すため）
+4. `appsscript.json` を貼り替える
+   ⚙️ プロジェクトの設定 →「appsscript.json マニフェスト ファイルをエディタで表示する」を ON
+5. メニュー「🅰️ はじめの設定 →🔄 コードの更新 →🔑 GitHubの鍵を設定」
+   - リポジトリ名：`circlenine/test`
+   - ブランチ：`claude/gas-code-info-collection-e5mxw3`
+   - フォルダ：`gas`
+   - トークン：GitHubで作った読み取り専用のもの
+6. 「🔄 コードを更新する」を1回押して、承認画面を通す
+
+### GitHubトークンの作り方（スマホでも可）
+
+```
+github.com → 右上のアイコン → Settings
+→ Developer settings → Personal access tokens → Fine-grained tokens
+→ Generate new token
+　　Repository access : Only select repositories → circlenine/test
+　　Permissions       : Repository permissions → Contents → Read-only
+→ Generate token → 表示された github_pat_… をコピー
+```
+
+読み取り専用・そのリポジトリだけ、にすること。
+トークンは ScriptProperties にしまわれる。コードにもシートにも書かれない。
+
+### 以降
+
+私が GitHub に push する → 「🔄 コードを更新する」を押す → 終わり。
+
+### 壊れたときは
+
+- メニュー「⏪ 前のコードに戻す」で、書き換える直前に戻せる
+- ドライブの `taxi-gas/backup/日時/` に全ファイルが残っている（10世代）
+- それも無理なら、GitHub から手で貼り直す
+
+### 注意
+
+- `script.projects` は、他のApps Scriptプロジェクトも編集できる広い権限。
+- 書き換えは必ずバックアップを取ってから。取れなければ書き込まない。
+- `appsscript` が含まれない書き込みは、危ないので拒否する。

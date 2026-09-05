@@ -2,7 +2,18 @@
  * ================================================================
  *  コードの自動更新（005-Updater.gs）
  *
- *  ★★★  U005ver  （2026/09/06）  ★★★
+ *  ★★★  U006ver  （2026/09/06）  ★★★
+ *
+ *  [U006ver]
+ *   ・「更新できる状態か調べる」が、名前を並べるだけなのに
+ *     ぜんぶのファイル（約400KB）を読み込んでいた。名前だけ見るようにした
+ *     これが原因で90秒を超え、見張りが「止まった」と誤って言っていた
+ *   ・変わっていないファイルは読み込まないようにした（GitHubのshaで見分ける）
+ *     ふだんの更新は1ファイルだけになるので、ぐっと速くなる
+ *   ・止まったかどうかの見分け方を「最後に動きがあってからの時間」に変えた
+ *     途中で息をしていれば止まったと言わない。息が止まって2分半で知らせる
+ *   ・長い結果は、文字の量にあわせて行の高さを自動でひろげる
+ *   ・結果を空にするときは、行の高さをもとに戻す
  *
  *  [U005ver]
  *   ・チェックを押したときに「推定 約〇秒」を必ず出すようにした
@@ -74,7 +85,7 @@
  * ================================================================
  */
 
-const UPD_VERSION = "U005ver";
+const UPD_VERSION = "U006ver";
 
 /** ドライブ上の置き場所（GitHubを使わないときの読み元） */
 const UPD_FOLDER  = "taxi-gas";
@@ -132,8 +143,8 @@ function updGh_(url, raw) {
   return res.getContentText();
 }
 
-/** GitHub のフォルダから、コードのファイルを読む */
-function updReadGitHub_() {
+/** GitHub のフォルダにあるコードのファイル一覧（中身は読まない） */
+function updListGitHub_() {
   const base = "https://api.github.com/repos/" + updRepo_() + "/contents/";
   const dir = JSON.parse(updGh_(
     base + encodeURI(updPath_()) + "?ref=" + encodeURIComponent(updBranch_()), false));
@@ -143,19 +154,68 @@ function updReadGitHub_() {
   dir.forEach(function (e) {
     if (e.type !== "file") return;
     if (!/\.(gs|html|json)$/i.test(e.name)) return;
-    out.push({
-      name: updBase_(e.name),
-      type: updType_(e.name),
-      source: updGh_(base + encodeURI(e.path) + "?ref=" +
-                     encodeURIComponent(updBranch_()), true)
-    });
+    out.push({ name: updBase_(e.name), type: updType_(e.name),
+               path: e.path, sha: e.sha });
   });
   return out;
 }
 
+/**
+ * 前に取り込んだときの目印（GitHubのsha）。
+ * これと同じなら、そのファイルは変わっていないので読みに行かない。
+ * ぜんぶで400KBほどあるので、毎回ぜんぶ読むと時間がかかりすぎる。
+ */
+function updShas_() {
+  try {
+    return JSON.parse(updProps_().getProperty("GH_SHAS") || "{}");
+  } catch (e) { return {}; }
+}
+function updSaveShas_(map) {
+  try { updProps_().setProperty("GH_SHAS", JSON.stringify(map)); } catch (e) {}
+}
+
+/**
+ * GitHub から、変わったファイルだけ中身を読む。
+ * 戻り値は { files: 読んだもの, skipped: 変わっていなかった名前, shas: 新しい目印 }
+ */
+function updReadGitHub_() {
+  const base = "https://api.github.com/repos/" + updRepo_() + "/contents/";
+  const list = updListGitHub_();
+  const old = updShas_();
+  const files = [], skipped = [], shas = {};
+
+  list.forEach(function (e, i) {
+    shas[e.name] = e.sha;
+    if (old[e.name] && old[e.name] === e.sha) { skipped.push(e.name); return; }
+    updBeat_("読み込み中… " + e.name + "（" + (i + 1) + "/" + list.length + "）");
+    files.push({
+      name: e.name, type: e.type,
+      source: updGh_(base + encodeURI(e.path) + "?ref=" +
+                     encodeURIComponent(updBranch_()), true)
+    });
+  });
+  return { files: files, skipped: skipped, shas: shas };
+}
+
+/** 名前だけ調べる（「更新できる状態か調べる」用。中身は読まない） */
+function updListNew_() {
+  if (updSource_() === "github") {
+    return updListGitHub_().map(function (e) { return e.name; });
+  }
+  const folder = updFolder_();
+  const seen = {};
+  const it = folder.getFiles();
+  while (it.hasNext()) {
+    const nm = it.next().getName();
+    if (/\.(gs|html|json)$/i.test(nm)) seen[updBase_(nm)] = 1;
+  }
+  return Object.keys(seen);
+}
+
 /** 新しいコードを読む。読み元は自動で決まる */
 function updReadNew_() {
-  return updSource_() === "github" ? updReadGitHub_() : updReadDrive_();
+  if (updSource_() === "github") return updReadGitHub_();
+  return { files: updReadDrive_(), skipped: [], shas: null };
 }
 
 /** GitHub の置き場所と鍵を入れる */
@@ -210,16 +270,22 @@ function menuUpdateCode() {
     ? "GitHub（" + updRepo_() + " / " + updBranch_() + " / " + updPath_() + "）"
     : "ドライブ（" + UPD_FOLDER + "）";
 
-  updProgress_("新しいコードを読み込んでいます…", 80);
-  let neu;
+  updProgress_("新しいコードを読み込んでいます…", 160);
+  let got;
   try {
-    neu = updReadNew_();
+    got = updReadNew_();
   } catch (e) {
     return updTell_("❌ " + where + " を読めませんでした", e.message);
   }
-  if (!neu.length) {
+  const neu = got.files;
+  if (!neu.length && !got.skipped.length) {
     return updTell_("📂 新しいコードがありません",
       where + " に .gs のファイルが見つかりませんでした。");
+  }
+  if (!neu.length) {
+    return updTell_("✅ すでに最新です",
+      "前に取り込んだときから、どれも変わっていません。\n（" +
+      got.skipped.join("、") + "）");
   }
 
   // いまの中身を取る（ここで API が使えるかどうかも分かる）
@@ -260,6 +326,7 @@ function menuUpdateCode() {
 
   updProgress_("いまのコードを保存しています…", 70);
   ss.toast("いまのコードを保存しています…", "🔄 更新中", 60);
+  updBeat_("保存中");
 
   // ① まず今の中身を保存する。戻せないまま壊すのがいちばん困る
   let backupName = "";
@@ -283,6 +350,7 @@ function menuUpdateCode() {
 
   updProgress_("コードを書き込んでいます…", 45);
   ss.toast("コードを書き込んでいます…", "🔄 更新中", 60);
+  updBeat_("書き込み中");
   try {
     updPutProject_(merged);
   } catch (e) {
@@ -290,8 +358,11 @@ function menuUpdateCode() {
       e.message + "\n\nコードは元のままです。（保存：" + backupName + "）");
   }
 
+  // 書き込めたので、次から「変わっていないもの」を読まずに済むよう目印を覚える
+  if (got.shas) updSaveShas_(got.shas);
+
   // ③ ウェブアプリのデプロイもやり直す
-  updProgress_("デプロイをやり直しています…", 25);
+  updProgress_("デプロイをやり直しています…", 30);
   let dep = "";
   try {
     dep = updRedeploy_();
@@ -302,6 +373,7 @@ function menuUpdateCode() {
   updTell_("✅ 更新しました（" + (mod.length + add.length) + "件）",
     "入れ替え：" + (mod.join("、") || "なし") + "\n" +
     "追加　　：" + (add.join("、") || "なし") + "\n" +
+    (got.skipped.length ? "変更なし：" + got.skipped.join("、") + "\n" : "") +
     dep + "\n\n" +
     "戻すときはメニュー「⏪ 前のコードに戻す」。\n" +
     "保存：" + UPD_FOLDER + "/" + UPD_BACKUP + "/" + backupName);
@@ -377,9 +449,10 @@ function menuUpdateStatus() {
       "\n　（GitHubから読ませたいなら「🔑 GitHubの鍵を設定」）");
 
   try {
-    const neu = updReadNew_();
-    L.push(neu.length
-      ? "　見つかったファイル：" + neu.map(function (f) { return f.name; }).join("、")
+    // ここは名前が分かればよい。中身まで読むと時間がかかりすぎる
+    const names = updListNew_();
+    L.push(names.length
+      ? "　見つかったファイル：" + names.join("、")
       : "　.gs のファイルが見つかりません");
   } catch (e) {
     L.push("　読めません：" + e.message);
@@ -599,6 +672,8 @@ const PANEL_CHK_COL   = 2;    // はじめて置くときのチェックの列�
 const PANEL_CHK_SIZE  = 50;   // チェックの大きさ（スマホで押しやすいように）
 const PANEL_CHK_H     = 70;   // チェックの行の高さ
 const PANEL_GAP_MAX   = 4;    // ボタンの間に空けてよい行数（押し間違い防止の空行用）
+const PANEL_RESULT_H  = 42;   // 結果らんの、ふだんの高さ
+const PANEL_STALL_SEC = 150;  // 何秒うんともすんとも言わなければ「止まった」とみなすか
 const PANEL_HEAD      = "▼ チェックを入れると動きます（終わると自動で外れます）";
 // 見出しを探すときの手がかり。文言を少し直しても見つけられるようにしておく
 const PANEL_MARK      = "チェックを入れると動きます";
@@ -614,10 +689,10 @@ const PANEL_SCAN      = 300;  // 見出しをどこまで探すか（行）
 function panelItems_() {
   return [
     { key: "コードを更新",         label: "[1] コードを更新する",        fn: "menuUpdateCode",
-      sec: 90,
+      sec: 180,
       note: "GitHubの新しいコードを取り込み、デプロイもやり直します" },
     { key: "更新できる状態",       label: "[2] 更新できる状態か調べる",  fn: "menuUpdateStatus",
-      sec: 25,
+      sec: 20,
       note: "APIが使えるか、どこから読むかを見ます" },
     { key: "全タブをまとめて整形", label: "[3] 全タブをまとめて整形する", fn: "menuFormatAll",
       sec: 150,
@@ -1191,20 +1266,57 @@ function panelRun_(row) {
   }
 }
 
-/** 結果らんを空にする */
+/** 全角を2、半角を1として数える（行の高さを見積もるため） */
+function updWidth_(str) {
+  const t = String(str);
+  let w = 0;
+  for (let i = 0; i < t.length; i++) {
+    w += t.charCodeAt(i) < 0x100 ? 1 : 2;
+  }
+  return w;
+}
+
+/**
+ * 結果らんの行の高さを、文字の量に合わせる。
+ * 長い文が下に隠れてしまうと、読めないので意味がない。
+ */
+function panelFitRow_(sh, row, col, text) {
+  try {
+    let r = row, c1 = col, c2 = col;
+    const rg = sh.getRange(row, col);
+    if (rg.isPartOfMerge()) {
+      const m = rg.getMergedRanges()[0];
+      r = m.getRow(); c1 = m.getColumn(); c2 = c1 + m.getNumColumns() - 1;
+    }
+    let w = 0;
+    for (let c = c1; c <= c2; c++) { try { w += sh.getColumnWidth(c); } catch (e) {} }
+    if (w <= 0) w = 400;
+
+    const per = Math.max(12, Math.floor(w / 7));   // 1行に入るおおよその文字ぶん
+    let lines = 0;
+    String(text).split("\n").forEach(function (ln) {
+      lines += Math.max(1, Math.ceil(updWidth_(ln) / per));
+    });
+    sh.setRowHeight(r, Math.min(600, Math.max(PANEL_RESULT_H, lines * 19 + 12)));
+  } catch (e) {}
+}
+
+/** 結果らんを空にして、行の高さもふだんに戻す */
 function panelClear_(sh) {
   if (!sh) return;
   try {
     const cell = panelResultCell_(sh);
     if (!cell) return;
     let rg = sh.getRange(cell.row, cell.col);
+    let r = cell.row;
     try {
       if (rg.isPartOfMerge()) {
         const m = rg.getMergedRanges();
-        if (m && m.length) rg = m[0].getCell(1, 1);
+        if (m && m.length) { rg = m[0].getCell(1, 1); r = m[0].getRow(); }
       }
     } catch (e) {}
     rg.setValue("");
+    try { sh.setRowHeight(r, PANEL_RESULT_H); } catch (e) {}
     SpreadsheetApp.flush();
   } catch (e) {}
 }
@@ -1232,12 +1344,28 @@ function panelMarkGet_() {
 }
 
 /**
+ * 「まだ生きています」と伝えるだけ。画面には出さない。
+ * 見張りは、これが途切れた時間で「止まった」かどうかを見分ける。
+ */
+function updBeat_(what) {
+  try {
+    const m = panelMarkGet_();
+    if (!m) return;
+    m.at = new Date().getTime();
+    if (what) m.step = String(what).slice(0, 60);
+    PropertiesService.getScriptProperties()
+      .setProperty("PANEL_RUNNING", JSON.stringify(m));
+  } catch (e) {}
+}
+
+/**
  * 途中経過を出す。長くかかるものは、いま何をしているかが見えたほうがよい。
- * パネルから動かしているときだけ書く。
+ * パネルから動かしているときだけ書く。あわせて「生きています」も伝える。
  */
 function updProgress_(text, restSec) {
   try {
     if (!panelMarkGet_()) return;
+    updBeat_(text);
     const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(PANEL_TAB);
     if (!sh) return;
     panelSay_(sh, "⏳ " + text +
@@ -1257,14 +1385,16 @@ function panelCheckStuck_(sh) {
   const m = panelMarkGet_();
   if (!m) return false;
 
-  const passed = Math.round((new Date().getTime() - (m.at || 0)) / 1000);
-  const limit = Math.min(Math.max((m.sec || 60) * 3, 90), 420);
-  if (passed < limit) return true;      // まだ動いている見込み。邪魔しない
+  // 「始めてから」ではなく「最後に動きがあってから」で見る。
+  // 時間のかかるものを、動いている最中に止まったと言ってしまわないように。
+  const quiet = Math.round((new Date().getTime() - (m.at || 0)) / 1000);
+  if (quiet < PANEL_STALL_SEC) return true;   // まだ息をしている。邪魔しない
 
   panelMarkEnd_();
   panelSay_(sh,
     "❌ " + (m.label || "さっきのもの") + " が終わりませんでした（" +
-    updSecText_(passed) + "たっても返事がありません）\n" +
+    (m.step ? "「" + m.step + "」のところで " : "") +
+    updSecText_(quiet) + "、動きがありません）\n" +
     "考えられること：\n" +
     "　・承認がまだ済んでいない\n" +
     "　　→ パソコンかブラウザでスプシを開き、メニューから同じものを1回動かして、\n" +
@@ -1292,7 +1422,9 @@ function panelSay_(sh, text) {
       }
     } catch (e) {}
     const now = new Date();
-    rg.setValue(pad2_(now.getHours()) + ":" + pad2_(now.getMinutes()) + "  " + text);
+    const body = pad2_(now.getHours()) + ":" + pad2_(now.getMinutes()) + "  " + text;
+    rg.setValue(body);
+    panelFitRow_(sh, cell.row, cell.col, body);
     SpreadsheetApp.flush();
   } catch (e) {}
 }

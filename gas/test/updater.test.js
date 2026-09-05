@@ -98,6 +98,7 @@ function mkPanel() {
   const cells = {};
   const sizes = {};
   const merges = {};      // 'r,c' → 結合のまとまりの左上 {r,c}
+  const heights = {};     // 行 → 高さ
   const prot = [];
   // 結合セルの左上を返す小さな入れ物
   function panelCell(r, c) {
@@ -109,6 +110,7 @@ function mkPanel() {
   return {
     _cells: cells,
     _sizes: sizes,
+    _heights: heights,
     _prot: prot,
     // r1..r2 / c1..c2 を1つにまとめる（左上は r1,c1）
     _merge: (r1, c1, r2, c2) => {
@@ -157,7 +159,10 @@ function mkPanel() {
       })
     }),
     clear: () => { throw new Error('説明タブを clear してはいけません'); },
-    setFrozenRows: () => {}, setRowHeight: () => {}, setRowHeights: () => {},
+    setFrozenRows: () => {},
+    setRowHeight: (r, h) => { heights[r] = h; },
+    setRowHeights: () => {},
+    getColumnWidth: c => (c === 2 ? 75 : 150),
     setColumnWidth() { return this; },
     insertCheckboxes() { return this; },
     getRange: (r, c, nr, nc) => {
@@ -210,7 +215,12 @@ function mkPanel() {
         isPartOfMerge: () => !!(merges[r + ',' + c]),
         getMergedRanges: () => {
           const m = merges[r + ',' + c];
-          return m ? [{ getCell: () => panelCell(m.r, m.c) }] : [];
+          if (!m) return [];
+          let n = 0;
+          for (let x = m.c; x <= m.c + 20; x++) { if (merges[m.r + ',' + x]) n++; else break; }
+          return [{ getCell: () => panelCell(m.r, m.c),
+                    getRow: () => m.r, getColumn: () => m.c,
+                    getNumColumns: () => n }];
         },
         setFontSize: v => {
           for (let i = 0; i < (nr || 1); i++) sizes[(r + i) + ',' + c] = v;
@@ -488,10 +498,12 @@ gh = {
     'gas/appsscript.json': '{"timeZone":"Asia/Tokyo"}'
   }
 };
-let g = F('updReadGitHub_')();
+let g = F('updReadGitHub_')().files;
 t(g.length === 3, '.gs と .json だけ読む（.md とフォルダは無視）');
 t(g.filter(x => x.name === '001-Code')[0].source === 'あたらしいコード', '中身が取れる');
 t(g.filter(x => x.name === 'appsscript')[0].type === 'JSON', 'appsscript は JSON 扱い');
+t(F('updListNew_')().sort().join(',') === '001-Code,004-WebApp,appsscript',
+  '名前だけなら、中身を読まずに一覧が出る');
 
 console.log('\n■ GitHubから読んで更新する');
 F('menuUpdateCode')();
@@ -1005,10 +1017,10 @@ F('panelWatch')();
 t(true, '結合の中でも落ちない');
 
 console.log('\n■ バージョン');
-t(vm.runInContext('UPD_VERSION', ctx) === 'U005ver', 'U005ver になっている');
+t(vm.runInContext('UPD_VERSION', ctx) === 'U006ver', 'U006ver になっている');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuUpdateStatus')();
-has(alerts[0].b, 'U005ver', '状態画面にバージョンが出る');
+has(alerts[0].b, 'U006ver', '状態画面にバージョンが出る');
 
 console.log('\n■ 番号でも見分けられる（文言を書き換えてしまったとき用）');
 {
@@ -1138,6 +1150,74 @@ F('panelWatch')();
 t(props['PANEL_RUNNING'] === undefined, '失敗しても残らない');
 has(panel._cells['48,2'], 'わざと失敗', '理由が出る');
 vm.runInContext('function menuFormatAll(){ formatRan++; }', ctx);
+
+console.log('\n■ 変わっていないファイルは読みに行かない');
+reset([]);
+props['GH_REPO'] = 'circlenine/test'; props['GH_TOKEN'] = 'x';
+gh = {
+  dir: [{ name: '001-Code.gs', path: 'gas/001-Code.gs', type: 'file', sha: 'AAA' },
+        { name: '004-WebApp.gs', path: 'gas/004-WebApp.gs', type: 'file', sha: 'BBB' },
+        { name: 'appsscript.json', path: 'gas/appsscript.json', type: 'file', sha: 'CCC' }],
+  raw: { 'gas/001-Code.gs': 'あたらしい', 'gas/004-WebApp.gs': 'ページ',
+         'gas/appsscript.json': '{}' }
+};
+let r1 = F('updReadGitHub_')();
+t(r1.files.length === 3, 'はじめは3つとも読む');
+t(r1.skipped.length === 0, '飛ばしたものは無い');
+F('updSaveShas_')(r1.shas);
+let r2 = F('updReadGitHub_')();
+t(r2.files.length === 0, '2回目は1つも読まない（中身が変わっていないので）');
+t(r2.skipped.length === 3, '3つとも飛ばした');
+gh.dir[0].sha = 'ZZZ';                              // 001-Code だけ変わった
+let r3 = F('updReadGitHub_')();
+t(r3.files.length === 1, '変わった1つだけ読む');
+t(r3.files[0].name === '001-Code', '変わったのは 001-Code');
+t(r3.skipped.length === 2, '残り2つは飛ばす');
+
+console.log('\n■ 変わっていなければ「すでに最新です」');
+reset([]);
+props['GH_REPO'] = 'circlenine/test'; props['GH_TOKEN'] = 'x';
+gh = { dir: [{ name: '001-Code.gs', path: 'gas/001-Code.gs', type: 'file', sha: 'AAA' }],
+       raw: { 'gas/001-Code.gs': 'あたらしい' } };
+F('updSaveShas_')({ '001-Code': 'AAA' });
+F('menuUpdateCode')();
+t(lastPut() === undefined, '書き込まない');
+has(alerts[alerts.length - 1].t, 'すでに最新', 'そう伝える');
+
+console.log('\n■ 息をしているうちは、止まったと言わない');
+gapLayout();
+props['PANEL_RUNNING'] = JSON.stringify(
+  { row: 36, label: '[1] コードを更新する', sec: 180,
+    at: Date.now() - 500 * 1000 });          // 始めてから500秒
+F('updBeat_')('読み込み中… 001-Code.gs');    // でも、たったいま息をした
+F('panelWatch')();
+t(props['PANEL_RUNNING'] !== undefined, '止まったと言わない（まだ動いている）');
+t(String(panel._cells['48,2'] || '').indexOf('終わりませんでした') === -1, '結果にも出さない');
+
+console.log('\n■ 息が止まったら知らせる');
+gapLayout();
+props['PANEL_RUNNING'] = JSON.stringify(
+  { row: 36, label: '[1] コードを更新する', sec: 180, step: '読み込み中… 001-Code.gs',
+    at: Date.now() - 200 * 1000 });          // 200秒、音沙汰なし
+F('panelWatch')();
+has(panel._cells['48,2'], '終わりませんでした', '知らせる');
+has(panel._cells['48,2'], '読み込み中… 001-Code.gs', 'どこで止まったかも出る');
+
+console.log('\n■ 長い結果は、行の高さを文字にあわせてひろげる');
+gapLayout();
+panel._merge(48, 2, 49, 8);
+F('panelSay_')(panel, '短い');
+const hShort = panel._heights[48];
+F('panelSay_')(panel, new Array(30).join('あいうえおかきくけこ') + '\n2行目\n3行目');
+const hLong = panel._heights[48];
+t(hShort >= 42, '短くても、ふだんの高さは下回らない（実際 ' + hShort + '）');
+t(hLong > hShort, '長い文は高くなる（' + hShort + ' → ' + hLong + '）');
+t(hLong <= 600, '高くなりすぎない');
+
+console.log('\n■ 空にするときは、高さをふだんに戻す');
+F('panelClear_')(panel);
+t(panel._heights[48] === 42, 'ふだんの高さ（42）に戻る');
+t(panel._cells['48,2'] === '', '中身も空になる');
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

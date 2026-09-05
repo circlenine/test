@@ -1,12 +1,17 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C012ver  （2026/09/05）  ★★★   ← もとは version 232
+ *  ★★★  C013ver  （2026/09/05）  ★★★   ← もとは version 232
  *
  *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
  *  ※ Apps Script 上のファイル名も「Code」に統一してください（旧: コード）
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C013ver]
+ *   ・4桁固定は「数字だけで打ったとき」に限る、に直した
+ *     区切りを入れれば読み違えようがないので、そちらは自由に書ける
+ *     0905 ／ 9/5 ／ 9月5日 ／ 9-5 ／ 260905 ／ 26/9/5 ／ 2026年9月5日
  *
  *  [C012ver]
  *   ・日付メモは「月日はかならず4桁」に決めた
@@ -306,7 +311,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C012ver";
+const CODE_VERSION = "C013ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -1149,13 +1154,14 @@ const ARROW_ANY  = /[\u2190-\u21FF\u2B05-\u2B07\u25B2-\u25C1\u2934\u2935\u27A1\u
  * 「0904」だけ、または「↑0904」だけの1行かどうかを見る。
  * 当てはまれば { bizDate: Date, dir: "prev"|"next"|"" } を返す。違えば null。
  *
- * 桁の読み方（ご指定どおり）:
- *   2〜4桁 … 日付だけ。年は送った日と同じ
- *            4桁=MMDD / 3桁=MDD / 2桁=その月の日
- *   5〜8桁 … 年＋日付。8桁=YYYYMMDD / 7桁=YYYMMDD / 6桁=YYMMDD / 5桁=YMMDD
- *            年は下けたが合う年のうち、今年にいちばん近いものを選ぶ
- *            （2028 も 28 も 8 も、同じ2028年になる）
- * 年を勝手に前後させることはしない。打った数字のとおりに読む。
+ * 書き方（どちらでもよい）:
+ *   数字だけ  … 月日はかならず4桁。0905
+ *               年も変えるなら先頭に足す。260905 / 20260905
+ *               （区切りが無いと 895 を 8月95日か89月5日か決められないため）
+ *   区切りあり … けた数は自由。9/5 ／ 9月5日 ／ 9-5
+ *               年も変えるなら先頭に足す。26/9/5 ／ 2026年9月5日
+ * 年を書かなければ送った年のまま。書いたらそのとおりの年にする。
+ * 1〜3桁の年（8 / 28 / 026）は、下けたが合う年のうち今年にいちばん近いものを選ぶ。
  */
 function parseDateNote_(text, sentAt) {
   let t = String(text == null ? "" : text).trim();
@@ -1171,24 +1177,42 @@ function parseDateNote_(text, sentAt) {
   t = t.replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); })
        .trim();
 
-  // 数字だけの短い1行 ＝ 日付メモを打ったつもり、とみなす。
+  // 区切りをそろえる（年・月・- ・. はぜんぶ「/」にして、末尾の「日」は落とす）
+  t = t.replace(/[年月]/g, "/").replace(/日\s*$/, "").replace(/[\-\.]/g, "/").trim();
+  t = t.replace(/\/+$/, "");                 // 「9/5/」のような余りを落とす
+
+  // 数字と「/」だけの短い1行 ＝ 日付メモを打ったつもり、とみなす。
   // ここから先は、読めなくても黙らずに「書き方」を返す。
-  if (!/^[0-9]{1,8}$/.test(t)) return null;
+  if (!/^[0-9]+(\/[0-9]+)*$/.test(t) || t.length > 10) return null;
 
   const now = sentAt || new Date();
   let y, mo, da;
 
-  if (t.length < 4) {
-    // 895 のような3桁以下。月日は4桁と決めているので受け取らない
-    return { error: true, input: t, dir: dir, why: "月日は4桁で送ってください" };
-  }
-  if (t.length === 4) {
-    y = now.getFullYear();                       // 年を書かなければ、送った年
-    mo = +t.slice(0, 2); da = +t.slice(2);
+  if (t.indexOf("/") === -1) {
+    // --- 数字だけ ---
+    // 区切りが無いと 895 が「8月95日」か「89月5日」か決められない。
+    // なので月日は4桁と決めている。年を足すぶんだけ長くなる。
+    if (t.length < 4) {
+      return { error: true, input: t, dir: dir, why: "数字だけのときは4桁です" };
+    }
+    if (t.length > 8) {
+      return { error: true, input: t, dir: dir, why: "けたが多すぎます" };
+    }
+    if (t.length === 4) {
+      y = now.getFullYear();                   // 年を書かなければ、送った年
+      mo = +t.slice(0, 2); da = +t.slice(2);
+    } else {
+      // 5〜8桁 ＝ 先頭が年、うしろ4桁が月日
+      y  = resolveYear_(t.slice(0, t.length - 4), now.getFullYear());
+      mo = +t.slice(-4, -2); da = +t.slice(-2);
+    }
   } else {
-    // 5〜8桁 ＝ 先頭が年、うしろ4桁が月日
-    y  = resolveYear_(t.slice(0, t.length - 4), now.getFullYear());
-    mo = +t.slice(-4, -2); da = +t.slice(-2);
+    // --- 区切りあり（9/5 ／ 9月5日 ／ 2026/9/5 など）---
+    // 区切りがあれば読み違えようがないので、けた数は自由
+    const q = t.split("/");
+    if (q.length === 2)      { y = now.getFullYear(); mo = +q[0]; da = +q[1]; }
+    else if (q.length === 3) { y = resolveYear_(q[0], now.getFullYear()); mo = +q[1]; da = +q[2]; }
+    else return { error: true, input: t, dir: dir, why: "区切りが多すぎます" };
   }
 
   if (!(mo >= 1 && mo <= 12)) {
@@ -1207,34 +1231,35 @@ function parseDateNote_(text, sentAt) {
 
 /**
  * 日付が読めなかったときに返す案内。
- * 「何がだめだったか」→「書き方」→「どのスクショに効かせるか」の順に並べる。
+ * 「何がだめだったか」→「日付の書き方」→「どのスクショに効かせるか」の順。
  * 例は今日の日付で作るので、そのまま真似すれば通る。
  */
 function dateNoteHelp_(input, why) {
   const now = new Date();
-  const md  = pad2_(now.getMonth() + 1) + pad2_(now.getDate());       // 例: 0905
-  const yy  = String(now.getFullYear()).slice(-2);                    // 例: 26
-  const lines = [];
+  const m   = now.getMonth() + 1;
+  const d   = now.getDate();
+  const md  = pad2_(m) + pad2_(d);                       // 例: 0905
+  const yy  = String(now.getFullYear()).slice(-2);       // 例: 26
 
-  lines.push("📅 日付が読み取れませんでした：「" + input + "」");
-  if (why) lines.push("　" + why);
-  lines.push("");
-  lines.push("▼ 日付は4桁で固定です");
-  lines.push("　" + (now.getMonth() + 1) + "月" + now.getDate() + "日 → " + md);
-  lines.push("　年も変えるときは、先頭に年を足す");
-  lines.push("　　" + now.getFullYear() + "年 → " + yy + md +
-             "（" + now.getFullYear() + md + " でも可）");
-  lines.push("");
-  lines.push("▼ どのスクショの日付かを伝える（どちらでも）");
-  lines.push("　① そのスクショに リプライ して　" + md);
-  lines.push("　② 矢印を添えて送る");
-  lines.push("　　↑" + md + "　… 矢印が指す上のスクショ（さっき送ったもの）");
-  lines.push("　　↓" + md + "　… 矢印が指す下のスクショ（このあと送るもの）");
-  lines.push("");
-  lines.push("矢印は ↑↓ でも ⬆️⬇️ でもかまいません。");
-  lines.push("何も送らなければ、送った日の営業曜日で登録します。");
-
-  return lines.join("\n");
+  return [
+    "📅 日付が読み取れませんでした：「" + input + "」",
+    (why ? "　" + why : ""),
+    "",
+    "▼ 日付の書き方（どちらでも）",
+    "　数字だけ　→ かならず4桁　" + m + "月" + d + "日 は " + md,
+    "　区切りあり → けた数は自由　" + m + "/" + d + "　" + m + "月" + d + "日　" + m + "-" + d,
+    "　年も変えるときは、先頭に年を足す",
+    "　　" + yy + md + "　" + yy + "/" + m + "/" + d + "　（" + now.getFullYear() + " と4桁でも可）",
+    "",
+    "▼ どのスクショの日付かを伝える（どちらでも）",
+    "　① そのスクショに リプライ して　" + md,
+    "　② 矢印を添えて送る",
+    "　　↑" + md + "　… 矢印が指す上のスクショ（さっき送ったもの）",
+    "　　↓" + md + "　… 矢印が指す下のスクショ（このあと送るもの）",
+    "",
+    "矢印は ↑↓ でも ⬆️⬇️ でもかまいません。",
+    "何も送らなければ、送った日の営業曜日で登録します。"
+  ].filter(function (x, i) { return !(i === 1 && x === ""); }).join("\n");
 }
 
 /** 年の下けた（"8" "28" "028" "2028"）から、今年にいちばん近い年を決める */

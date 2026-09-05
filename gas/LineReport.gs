@@ -2,11 +2,16 @@
  * ================================================================
  *  LINE画像（Flex Message）＋ まとめスプシ レポート作成
  *
- *  ★★★  L003ver  （2026/09/02）  ★★★
+ *  ★★★  L004ver  （2026/09/05）  ★★★
  *
  *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [L004ver]
+ *   ・裏メッセージの文面を「設定」タブから変えられるようにした
+ *     {期間} が 8/16(日)～9/15(月) に置き換わる
+ *     Code.gs の設定が読めないときは、今までの文面のまま
  *
  *  [L003ver]
  *   ・バージョン確認の表示を K → C に変更（Code.gs に合わせた）
@@ -29,7 +34,7 @@
  */
 
 /** このファイルのバージョン */
-const LR_VERSION = "L003ver";
+const LR_VERSION = "L004ver";
 
 
 /* ============ 鍵（コードに書かない） ============ */
@@ -538,7 +543,13 @@ function sendCustomReport(targetId, customStartD, customEndD) {
 
   let flexMessage = { "type": "bubble", "size": "giga", "header": { "type": "box", "layout": "vertical", "backgroundColor": "#1155ca", "paddingAll": "15px", "contents": [ { "type": "text", "text": `📈 【${periodStr}】分析・戦略レポート`, "weight": "bold", "color": "#ffffff", "size": "md", "wrap": true } ] }, "body": { "type": "box", "layout": "vertical", "paddingAll": "12px", "spacing": "none", "contents": flexContents }, "footer": { "type": "box", "layout": "vertical", "paddingAll": "15px", "contents": [ { "type": "button", "style": "primary", "color": "#d93025", "action": { "type": "uri", "label": "🚨ボタンを押せッ!!!!(スプシへ移動)🚨", "uri": dashboardUrl } } ] } };
   // 裏メッセージ（通知やトーク一覧に出る文字）
-  const altText = "📈" + lrAlt_(startD) + "～" + lrAlt_(endD) + "レポート作成 byシバンニ";
+  // 文面は Code.gs の「設定」タブから変えられる。読めないときは今までの文面
+  const span = lrAlt_(startD) + "～" + lrAlt_(endD);
+  let altText = "📈" + span + "レポート作成 byシバンニ";
+  if (typeof cfgAltText_ === "function") {
+    const tpl = String(cfgAltText_() || "");
+    if (tpl) altText = tpl.indexOf("{期間}") !== -1 ? tpl.split("{期間}").join(span) : tpl + span;
+  }
   let messages = [ { type: "flex", altText: altText, contents: flexMessage } ];
   const token = getLineToken_();
   // 送信先が無いときに broadcast（公式アカウントの友だち全員に配信）へ落ちないようにする。

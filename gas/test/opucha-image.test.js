@@ -13,18 +13,20 @@ const CtxDate = vm.runInContext('Date', ctx);
 /* ---- 偽のシート（書き込みを覚えておく） ---- */
 const written = {};      // タブ名 → 書かれた行の配列
 function makeSheet(name, rows) {
+  // データが始まる行。ふつうのタブは4行目から、「設定」タブは1行目から
+  const base = (name === '設定') ? 1 : 4;
   const sh = {
     getName: () => name,
-    getLastRow: () => 3 + rows.length,
+    getLastRow: () => base - 1 + rows.length,
     getMaxRows: () => 1000,
     insertRowsAfter: () => {},
-    getRange: (r, c, nr, nc) => chain(name, rows, r, c, nr, nc),
+    getRange: (r, c, nr, nc) => chain(name, rows, r, c, nr, nc, base),
     getRangeList: () => chain(name, rows),
     setRowHeights: () => {}, setRowHeightsForced: () => {},
     autoResizeColumns: () => {}, setColumnWidth: () => {},
     deleteRows: () => {}, insertRowsBefore: () => {}, sort: () => {},
     getFrozenRows: () => 3, setFrozenRows: () => {},
-    getDataRange: () => chain(name, rows),
+    getDataRange: () => chain(name, rows, base, 1, rows.length, 11, base),
     getMaxColumns: () => 11,
     getParent: () => ({ getSheetByName: n => TABS[n] ? makeSheet(n, TABS[n]) : null, toast: () => {} })
   };
@@ -32,22 +34,23 @@ function makeSheet(name, rows) {
   return new Proxy(sh, { get: (t, k) => (k in t ? t[k] : () => undefined) });
 }
 // 呼ばれても困らないよう、何を呼んでも自分を返す偽の Range
-function chain(name, rows, r0, c0, nr, nc) {
+function chain(name, rows, r0, c0, nr, nc, base) {
+  const B = base || 4;
   // 行・列の指定があればそのぶんだけ切り出す（本物と同じ形にする）
   const cut = () => (typeof r0 === 'number')
-    ? rows.slice(r0 - 4, r0 - 4 + (nr || 1)).map(x => x.slice(c0 - 1, c0 - 1 + (nc || 1)))
+    ? rows.slice(r0 - B, r0 - B + (nr || 1)).map(x => x.slice(c0 - 1, c0 - 1 + (nc || 1)))
     : rows.map(x => x.slice());
   const put = v => {
     if (typeof r0 !== 'number' || typeof c0 !== 'number') {
       written[name] = (written[name] || []).concat(v);
       return;
     }
-    const base = r0 - 4;
+    const at = r0 - B;
     // 最終行より下に書くのは「追加」。テストから見えるように別に控えておく
-    if (base >= rows.length) written[name] = (written[name] || []).concat(v);
+    if (at >= rows.length) written[name] = (written[name] || []).concat(v);
     v.forEach((vr, i) => {
-      while (rows.length <= base + i) rows.push(new Array(11).fill(''));
-      vr.forEach((vv, j) => { rows[base + i][c0 - 1 + j] = vv; });
+      while (rows.length <= at + i) rows.push(new Array(11).fill(''));
+      vr.forEach((vv, j) => { rows[at + i][c0 - 1 + j] = vv; });
     });
   };
   const r = {
@@ -140,12 +143,16 @@ function ok(cond, label) {
 }
 function has(s, needle, label) { ok(String(s).indexOf(needle) !== -1, label + '  … 実際: ' + JSON.stringify(String(s).slice(0, 160))); }
 
-console.log('\n■ 取込の時間帯は 17:00〜翌05:15');
+console.log('\n■ 取込の時間帯は 17:00〜翌05:15（設定タブが無いときの初期値）');
 // const は ctx に生えないので、中で評価して取り出す
 const K = n => vm.runInContext(n, ctx);
-ok(K('OPUCHA_FROM_MIN') === 17 * 60, 'OPUCHA_FROM_MIN = 17:00');
-ok(K('OPUCHA_TO_MIN') === 5 * 60 + 15, 'OPUCHA_TO_MIN = 翌05:15');
-ok(K('OPUCHA_HOURS_TEXT') === '17:00〜翌05:15（29:15）', '文面用の時間帯も同じ');
+ok(F('cfgOpuFrom_')() === 17 * 60, '開始 17:00');
+ok(F('cfgOpuTo_')() === 5 * 60 + 15, '終了 翌05:15');
+ok(F('cfgHoursText_')() === '17:00〜翌05:15（29:15）', '文面用の時間帯も同じ');
+ok(F('cfgOpuMinYen_')() === 1000, '最低金額 ￥1,000');
+ok(F('cfgBizStart_')() === 17, '営業曜日の始まり 17時');
+ok(F('cfgNearMin_')() === 15, '要確認の幅 15分');
+ok(F('cfgHighYen_')() === 40000, '高すぎる金額 ￥40,000');
 
 console.log('\n■ 時間外は「乗車不可な時間」として理由付きで落とす');
 resetSheets();
@@ -288,7 +295,7 @@ const ymd = o => o && (o.bizDate.getFullYear() + '-' +
 console.log('\n■ 2〜4桁は「日付だけ」。年は送った日と同じ');
 ok(ymd(P('0904')) === '2026-09-04', '0904 → 2026-09-04');
 ok(ymd(P('904'))  === '2026-09-04', '904（3桁）→ 2026-09-04');
-ok(ymd(P('1231')) === '2025-12-31', '9月に1231と打ったら去年の12/31（未来にはしない）');
+ok(ymd(P('1231')) === '2026-12-31', '1231 → 打ったとおり今年の12/31（年は動かさない）');
 ok(ymd(P('04'))   === '2026-09-04', '04（2桁）→ 送った月の4日');
 ok(ymd(P('０９０４')) === '2026-09-04', '全角でも読める');
 
@@ -322,9 +329,9 @@ ok(ymd(P('9/4')) === '2026-09-04', '9/4 のような書き方も読める');
 ok(ymd(P('2028/9/4')) === '2028-09-04', '2028/9/4 も読める');
 ok(ymd(P('9月4日')) === '2026-09-04', '9月4日 も読める');
 
-console.log('\n■ 先の日付になったら1年戻す（オプチャは過去の投稿なので）');
-ok(ymd(F('parseDateNote_')('1231', new CtxDate(2026, 0, 5, 20, 0, 0))) === '2025-12-31',
-   '1/5 に 1231 と打ったら前の年の12/31');
+console.log('\n■ 年は勝手に動かさない');
+ok(ymd(F('parseDateNote_')('1231', new CtxDate(2026, 0, 5, 20, 0, 0))) === '2026-12-31',
+   '1/5 に 1231 と打っても、その年の12/31のまま');
 
 console.log('\n■ 身内の名前を見分ける');
 ok(F('memberFromScreenName_')('齊藤大介') === 'ﾀﾞｲｽｹ', '対応表の名前');
@@ -444,6 +451,69 @@ console.log('\n■ ⚠️ が整形で消えないこと');
   ok(hit.length === 1 && String(hit[0][K('C_MARK') - 1]).trim() === '⚠️',
      '整形しても I列に「要確認」がある行の ⚠️ は残る');
 }
+
+console.log('\n■ 「設定」タブの値が効くこと');
+// 設定タブは B列=項目 / C列=値。1行目は見出し
+function cfgRow(key, val) {
+  const r = new Array(11).fill('');
+  r[1] = key; r[2] = val;    // B列=項目 / C列=値
+  return r;
+}
+function useSettings(list) {
+  resetSheets();
+  TABS['設定'] = [cfgRow('項目', '値')].concat(list);   // 1行目は見出し
+  vm.runInContext('_cfgCache = null', ctx);
+}
+useSettings([
+  cfgRow('オプチャ取込の開始時刻', '18:00'),
+  cfgRow('オプチャ取込の終了時刻', '04:00'),
+  cfgRow('オプチャの最低金額（円）', 3000),
+  cfgRow('営業曜日の始まり（時）', 16),
+  cfgRow('要確認とみなす時刻の幅（分）', 30),
+  cfgRow('高すぎる金額の線（円）', 50000),
+  cfgRow('ショートの上限（円）', 3999),
+  cfgRow('ロングの下限（円）', 12000),
+  cfgRow('裏メッセージの文面', '📈{期間}の記録 by誰か')
+]);
+ok(F('cfgOpuFrom_')() === 18 * 60, '開始時刻が設定どおり 18:00');
+ok(F('cfgOpuTo_')() === 4 * 60, '終了時刻が設定どおり 04:00');
+ok(F('cfgOpuMinYen_')() === 3000, '最低金額が設定どおり');
+ok(F('cfgBizStart_')() === 16, '営業曜日の始まりが設定どおり');
+ok(F('cfgNearMin_')() === 30, '要確認の幅が設定どおり');
+ok(F('cfgHighYen_')() === 50000, '高すぎる金額が設定どおり');
+ok(F('cfgShortMax_')() === 3999, 'ショートの上限が設定どおり');
+ok(F('cfgLongMin_')() === 12000, 'ロングの下限が設定どおり');
+ok(F('cfgAltText_')() === '📈{期間}の記録 by誰か', '裏メッセージの文面が設定どおり');
+ok(F('cfgHoursText_')() === '18:00〜翌04:00（28:00）', '説明用の文字も作り直される');
+
+console.log('\n■ 設定を変えると取込の判定も変わる');
+r = F('writeOpuchaRecords_')([
+  { time: '17:30', money: 12000, place: '新地4' },   // 18:00 より前 → 落ちる
+  { time: '18:00', money: 12000, place: '新地4' },   // ちょうど → 入る
+  { time: '23:00', money:  2000, place: '新地7' }    // ￥3,000 未満 → 落ちる
+], 'CFG1', new CtxDate(2026, 8, 3));
+ok(r.wrote === 1, '設定に合わせて1件だけ入る');
+has(r.skipped[0], '18:00〜翌04:00', '返信の文言も設定に合わせて変わる');
+has(r.skipped[1], '￥3,000未満', '最低金額の文言も設定どおり');
+
+console.log('\n■ 空欄・変な値なら初期値に戻る');
+useSettings([
+  cfgRow('オプチャの最低金額（円）', ''),
+  cfgRow('営業曜日の始まり（時）', 'あいうえお'),
+  cfgRow('オプチャ取込の開始時刻', '25時ごろ')
+]);
+ok(F('cfgOpuMinYen_')() === 1000, '空欄 → 初期値 ￥1,000');
+ok(F('cfgBizStart_')() === 17, '数字にならない → 初期値 17時');
+ok(F('cfgOpuFrom_')() === 17 * 60, '時刻にならない → 初期値 17:00');
+
+console.log('\n■ セルが時刻書式（Date）でも読める');
+useSettings([cfgRow('オプチャ取込の開始時刻', new CtxDate(1899, 11, 30, 19, 30, 0))]);
+ok(F('cfgOpuFrom_')() === 19 * 60 + 30, 'Date で入っていても 19:30 と読む');
+
+console.log('\n■ 「設定」タブが無くても動く');
+resetSheets();
+vm.runInContext('_cfgCache = null', ctx);
+ok(F('cfgOpuFrom_')() === 17 * 60, 'タブが無ければ初期値');
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

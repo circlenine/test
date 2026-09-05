@@ -6,9 +6,9 @@
 
 | 記号 | ファイル | いま |
 |---|---|---|
-| **C** | `Code.gs`（統合スクリプト） | C010ver |
-| **L** | `LineReport.gs` | L003ver |
-| **E** | `Extras.gs` | E002ver |
+| **C** | `Code.gs`（統合スクリプト） | C011ver |
+| **L** | `LineReport.gs` | L004ver |
+| **E** | `Extras.gs` | E003ver |
 
 Apps Script 上のファイル名も **`Code`** に統一する（旧: `コード`）。
 名前の変更は、ファイル一覧でそのファイルの **⋮** → 「名前を変更」から。

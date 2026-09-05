@@ -22,8 +22,18 @@
  * ================================================================
  */
 
+// 金額の区分。「設定」タブ（Code.gs）で変えられる。読めないときはこの値
 const ST_SHORT_MAX = 4999;    // これ以下がショート
 const ST_LONG_MIN  = 10000;   // これ以上がロング
+
+/** ショートの上限。「設定」タブがあればそちらを使う */
+function stShortMax_() {
+  return (typeof cfgShortMax_ === "function") ? cfgShortMax_() : ST_SHORT_MAX;
+}
+/** ロングの下限。「設定」タブがあればそちらを使う */
+function stLongMin_() {
+  return (typeof cfgLongMin_ === "function") ? cfgLongMin_() : ST_LONG_MIN;
+}
 const ST_HOURS = [20, 21, 22, 23, 24, 25, 26, 27, 28, 29];  // 20時〜翌5時
 const ST_MIN_N = 3;           // 立ち回り候補として出す最低件数
 const ST_SHRINK_K = 4;        // 件数が少ない枠を全体平均へ寄せる強さ
@@ -31,8 +41,8 @@ const ST_SHRINK_K = 4;        // 件数が少ない枠を全体平均へ寄せ�
 /* ============ 区分 ============ */
 
 function stBand_(money) {
-  if (money >= ST_LONG_MIN) return "ロング";
-  if (money > ST_SHORT_MAX) return "ミドル";
+  if (money >= stLongMin_())  return "ロング";
+  if (money > stShortMax_())  return "ミドル";
   return "ショート";
 }
 

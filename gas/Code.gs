@@ -1,12 +1,19 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C010ver  （2026/09/05）  ★★★   ← もとは version 232
+ *  ★★★  C011ver  （2026/09/05）  ★★★   ← もとは version 232
  *
  *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
  *  ※ Apps Script 上のファイル名も「Code」に統一してください（旧: コード）
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C011ver]
+ *   ・「設定」タブを作った。よく変える数字と文言をスプシから直せる
+ *     金額の区分／オプチャの取込時間・最低金額／営業曜日の始まり／
+ *     要確認とみなす時刻の幅／高すぎる金額の線／裏メッセージの文面
+ *     メニュー「⚙️ 設定タブを作る・直す」で作れる。無ければ今までの値で動く
+ *   ・日付メモの年を勝手に前後させるのをやめた（打った数字のとおりに読む）
  *
  *  [C010ver]
  *   ・スクショの営業曜日を、数字を打つだけで直せるようにした
@@ -291,7 +298,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C010ver";
+const CODE_VERSION = "C011ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -319,15 +326,165 @@ const INFO_TAB      = "説明";
 const ALL_TABS      = PERSONAL_TABS.concat(AREA_TABS, FLAG_TABS);
 
 // オプチャ取込の条件
-// 僕らが実際に走れるのは 17:00〜翌05:15（＝29:15）。この外の乗車は取り込まない
-const OPUCHA_FROM_MIN  = 17 * 60;      // 17:00
-const OPUCHA_TO_MIN    = 5 * 60 + 15;  // 翌05:15（29:15）
-const OPUCHA_HOURS_TEXT = "17:00〜翌05:15（29:15）";
-const OPUCHA_MIN_MONEY = 1000;         // これ未満は情報不足として除外
+// 取込の時間帯・最低金額は「設定」タブで変えられる（初期値は SETTINGS_DEFS を見てください）
 const OPUCHA_EXCLUDE   = /(didi|ディディ|ﾃﾞｨﾃﾞｨ|連続配車|連続 *配車)/i;
 const ROUTE_SEP        = /[〜～\-–—→⇒➡▶▷>]|から/;
 
-const BIZ_START_HOUR = 17;  // 営業曜日の起点（当日17:00〜翌16:59）
+
+
+/* ============ 1-2. 「設定」タブ ============ */
+/*
+ * よく変える数字と文言を、コードではなくスプレッドシートから直せるようにする。
+ * スマホからでも直せるのが狙い。「設定」タブが無ければ、下の「初期値」で動く。
+ */
+
+const SETTINGS_TAB = "設定";
+
+// key … B列に書く見出し（これで探すので、変えると読めなくなる）
+// def … 初期値。「設定」タブが無い／空のときはこれを使う
+// kind … num=数字 / time=HH:MM / text=文字
+const SETTINGS_DEFS = [
+  { key: "ショートの上限（円）",       def: 4999,   kind: "num",
+    help: "これ以下がショート" },
+  { key: "ロングの下限（円）",         def: 10000,  kind: "num",
+    help: "これ以上がロング。あいだがミドル" },
+  { key: "営業曜日の始まり（時）",     def: 17,     kind: "num",
+    help: "この時刻から翌日のこの時刻までを1日として数える" },
+  { key: "オプチャ取込の開始時刻",     def: "17:00", kind: "time",
+    help: "スクショの乗車時刻がこれより前なら取り込まない" },
+  { key: "オプチャ取込の終了時刻",     def: "05:15", kind: "time",
+    help: "翌朝の時刻。これより後なら取り込まない（29:15と同じ）" },
+  { key: "オプチャの最低金額（円）",   def: 1000,   kind: "num",
+    help: "これ未満は情報不足として取り込まない" },
+  { key: "要確認とみなす時刻の幅（分）", def: 15,   kind: "num",
+    help: "身内の記録と何分以内なら「同じ乗車」とみなすか" },
+  { key: "高すぎる金額の線（円）",     def: 40000,  kind: "num",
+    help: "これ以上の金額は ⚠️ を付けて要確認にする" },
+  { key: "裏メッセージの文面",         def: "📈{期間}レポート作成 byシバンニ", kind: "text",
+    help: "LINEの通知に出る文字。{期間} が 8/16(日)～9/15(月) に置き換わります" }
+];
+
+// 1回の実行のあいだだけ覚えておく（毎回シートを読みに行かないため）
+let _cfgCache = null;
+
+/** 「設定」タブを読む。無ければ空のまま（＝初期値が使われる） */
+function cfgLoad_() {
+  if (_cfgCache) return _cfgCache;
+  _cfgCache = {};
+  try {
+    const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SETTINGS_TAB);
+    if (sh) {
+      const last = sh.getLastRow();
+      if (last >= 2) {
+        sh.getRange(2, 2, last - 1, 2).getValues().forEach(function (r) {
+          const k = String(r[0]).trim();
+          if (k) _cfgCache[k] = r[1];
+        });
+      }
+    }
+  } catch (e) { /* 設定が読めなくても、初期値で動けばよい */ }
+  return _cfgCache;
+}
+
+/** 設定を1つ取る。空欄・読めない値なら初期値 */
+function cfg_(key) {
+  const def = (function () {
+    for (let i = 0; i < SETTINGS_DEFS.length; i++) {
+      if (SETTINGS_DEFS[i].key === key) return SETTINGS_DEFS[i];
+    }
+    return null;
+  })();
+  if (!def) return "";
+
+  const raw = cfgLoad_()[key];
+  if (raw === undefined || raw === null || String(raw).trim() === "") return def.def;
+
+  if (def.kind === "num") {
+    const n = parseInt(String(raw).replace(/[^0-9\-]/g, ""), 10);
+    return isNaN(n) ? def.def : n;
+  }
+  if (def.kind === "time") {
+    // セルが時刻書式だと Date で返ってくるので、そのときは時分を取り出す
+    if (raw instanceof Date) return pad2_(raw.getHours()) + ":" + pad2_(raw.getMinutes());
+    const m = String(raw).trim().match(/^(\d{1,2})[:：](\d{2})$/);
+    return m ? pad2_(+m[1] % 24) + ":" + m[2] : def.def;
+  }
+  return String(raw);
+}
+
+/** "17:00" → 1020（0時からの分） */
+function cfgMin_(key) {
+  const t = String(cfg_(key));
+  const m = t.match(/^(\d{1,2}):(\d{2})$/);
+  return m ? (+m[1]) * 60 + (+m[2]) : 0;
+}
+
+// --- 実際に使うときの入口。名前で意味が分かるようにしておく ---
+function cfgShortMax_()   { return cfg_("ショートの上限（円）"); }
+function cfgLongMin_()    { return cfg_("ロングの下限（円）"); }
+function cfgBizStart_()   { return cfg_("営業曜日の始まり（時）"); }
+function cfgOpuFrom_()    { return cfgMin_("オプチャ取込の開始時刻"); }
+function cfgOpuTo_()      { return cfgMin_("オプチャ取込の終了時刻"); }
+function cfgOpuMinYen_()  { return cfg_("オプチャの最低金額（円）"); }
+function cfgNearMin_()    { return cfg_("要確認とみなす時刻の幅（分）"); }
+function cfgHighYen_()    { return cfg_("高すぎる金額の線（円）"); }
+function cfgAltText_()    { return cfg_("裏メッセージの文面"); }
+
+/** 「17:00〜翌05:15（29:15）」という説明用の文字を作る */
+function cfgHoursText_() {
+  const from = cfg_("オプチャ取込の開始時刻");
+  const to   = cfg_("オプチャ取込の終了時刻");
+  const p = String(to).split(":");
+  const over = (parseInt(p[0], 10) + 24) + ":" + p[1];     // 05:15 → 29:15
+  return from + "〜翌" + to + "（" + over + "）";
+}
+
+/**
+ * 「設定」タブを作る（あれば足りない行だけ足す）。
+ * 人が書いた値は消さない。見出しと説明だけ書き直す。
+ */
+function menuSetupSettings() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(SETTINGS_TAB);
+  const isNew = !sh;
+  if (isNew) sh = ss.insertSheet(SETTINGS_TAB);
+
+  // いま入っている値を覚えておく（作り直しても消さないため）
+  const cur = {};
+  const last = sh.getLastRow();
+  if (last >= 2) {
+    sh.getRange(2, 2, last - 1, 2).getValues().forEach(function (r) {
+      const k = String(r[0]).trim();
+      if (k && String(r[1]).trim() !== "") cur[k] = r[1];
+    });
+  }
+
+  const rows = [["", "項目", "値", "説明"]];
+  SETTINGS_DEFS.forEach(function (d) {
+    rows.push(["", d.key, (d.key in cur) ? cur[d.key] : d.def, d.help]);
+  });
+
+  sh.clear();
+  sh.getRange(1, 1, rows.length, 4).setValues(rows);
+  sh.getRange(1, 2, 1, 3).setFontWeight("bold").setBackground("#e8eaed");
+  sh.getRange(2, 3, rows.length - 1, 1).setBackground("#fff8e1");   // 触ってよい列を目立たせる
+  sh.setColumnWidth(1, 20).setColumnWidth(2, 210).setColumnWidth(3, 130).setColumnWidth(4, 420);
+  sh.getRange(1, 1, rows.length, 4).setVerticalAlignment("middle").setWrap(true);
+  sh.setFrozenRows(1);
+
+  _cfgCache = null;   // 次からは新しい値で動く
+  SpreadsheetApp.getUi().alert(
+    (isNew ? "「設定」タブを作りました。\n\n" : "「設定」タブを整えました。\n\n") +
+    "黄色いC列の数字や文字を直すと、次から新しい値で動きます。\n" +
+    "空っぽにすると、もとの値に戻ります。");
+}
+
+/** 設定を読み直す（タブを直したあと、すぐ効かせたいとき用） */
+function menuReloadSettings() {
+  _cfgCache = null;
+  const lines = SETTINGS_DEFS.map(function (d) { return "・" + d.key + "：" + cfg_(d.key); });
+  SpreadsheetApp.getUi().alert("いまの設定\n\n" + lines.join("\n"));
+}
 const START_ROW = 4;   // データ開始行
 const LAST_COL  = 11;  // A〜K
 const BASE_H    = 21;  // 基本の行高さ
@@ -515,7 +672,7 @@ function dayColor_(d) {
 /** 営業日：当日17:00〜翌16:59を「当日」扱い */
 function businessDate_(dt) {
   const d = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 12, 0, 0);
-  if (dt.getHours() < BIZ_START_HOUR) d.setDate(d.getDate() - 1);
+  if (dt.getHours() < cfgBizStart_()) d.setDate(d.getDate() - 1);
   return d;
 }
 
@@ -591,7 +748,7 @@ function timeRank_(hhmm) {
   if (!m) return 999;   // ??:?? はその営業日の最後に置く
   let h = parseInt(m[1], 10);
   const mi = parseInt(m[2], 10);
-  if (h < BIZ_START_HOUR) h += 24;
+  if (h < cfgBizStart_()) h += 24;
   return h + mi / 60;
 }
 
@@ -990,6 +1147,7 @@ const ARROW_ANY  = /[\u2190-\u21FF\u2B05-\u2B07\u25B2-\u25C1\u2934\u2935\u27A1\u
  *   5〜8桁 … 年＋日付。8桁=YYYYMMDD / 7桁=YYYMMDD / 6桁=YYMMDD / 5桁=YMMDD
  *            年は下けたが合う年のうち、今年にいちばん近いものを選ぶ
  *            （2028 も 28 も 8 も、同じ2028年になる）
+ * 年を勝手に前後させることはしない。打った数字のとおりに読む。
  */
 function parseDateNote_(text, sentAt) {
   let t = String(text == null ? "" : text).trim();
@@ -1009,7 +1167,6 @@ function parseDateNote_(text, sentAt) {
 
   const now = sentAt || new Date();
   let y, mo, da;
-  let explicitYear = false;      // 年を自分で書いたか（書いたならその年を尊重する）
 
   if (/^[0-9]{2,8}$/.test(t)) {
     if (t.length <= 4) {
@@ -1023,12 +1180,10 @@ function parseDateNote_(text, sentAt) {
       y  = resolveYear_(t.slice(0, t.length - 4), now.getFullYear());
       mo = +t.slice(-4, -2);
       da = +t.slice(-2);
-      explicitYear = true;
     }
   } else if (/^[0-9]{1,4}\/[0-9]{1,2}(\/[0-9]{1,2})?$/.test(t)) {
     const q = t.split("/");
-    if (q.length === 3) { y = resolveYear_(q[0], now.getFullYear()); mo = +q[1]; da = +q[2];
-                          explicitYear = true; }
+    if (q.length === 3) { y = resolveYear_(q[0], now.getFullYear()); mo = +q[1]; da = +q[2]; }
     else                { y = now.getFullYear(); mo = +q[0]; da = +q[1]; }
   } else {
     return null;                 // 数字と区切り以外が混ざっている＝ただの文章
@@ -1037,12 +1192,6 @@ function parseDateNote_(text, sentAt) {
   if (!(mo >= 1 && mo <= 12) || !(da >= 1 && da <= 31)) return null;
   const d = new Date(y, mo - 1, da, 12, 0, 0);
   if (d.getMonth() !== mo - 1 || d.getDate() !== da) return null;   // 2/31 のような日は無し
-
-  // 年を書かなかったのに先の日付になったら1年戻す。オプチャは過去の投稿なので、
-  // 9月に「1231」と打ったら今年の年末ではなく、去年の年末のはず。
-  if (!explicitYear && d.getTime() - now.getTime() > 7 * 24 * 3600 * 1000) {
-    d.setFullYear(d.getFullYear() - 1);
-  }
 
   return { bizDate: d, dir: dir };
 }
@@ -1404,14 +1553,19 @@ function writeOpuchaRecords_(list, messageId, bizDate) {
   const seen = opuchaExistingKeys_(ss);
   const own  = ownRideIndex_(ss);      // 自分たちの記録（個人タブ）の一覧
   let suspect = 0;
+  // 設定は行ごとに読み直さず、はじめに1回だけ取っておく
+  const minYen    = cfgOpuMinYen_();
+  const fromMin   = cfgOpuFrom_();
+  const toMin     = cfgOpuTo_();
+  const hoursText = cfgHoursText_();
 
   list.forEach(function (x, i) {
     const tag = opuchaLabel_(x) + " → ";
 
     const money = parseInt(String(x.money).replace(/[^0-9]/g, ""), 10);
     if (isNaN(money)) { skipped.push(tag + "金額が読み取れません"); return; }
-    if (money < OPUCHA_MIN_MONEY) {
-      skipped.push(tag + "金額が￥" + OPUCHA_MIN_MONEY.toLocaleString() + "未満です");
+    if (money < minYen) {
+      skipped.push(tag + "金額が￥" + minYen.toLocaleString() + "未満です");
       return;
     }
 
@@ -1421,8 +1575,8 @@ function writeOpuchaRecords_(list, messageId, bizDate) {
     // 僕らが走れるのは 18:00〜翌05:30。この外は、そもそも行けない時間なので入れない
     const tm = time.split(":");
     const min = parseInt(tm[0], 10) * 60 + parseInt(tm[1], 10);
-    if (!(min >= OPUCHA_FROM_MIN || min <= OPUCHA_TO_MIN)) {
-      skipped.push(tag + "乗車時刻が " + OPUCHA_HOURS_TEXT +
+    if (!(min >= fromMin || min <= toMin)) {
+      skipped.push(tag + "乗車時刻が " + hoursText +
                    " の外です。私たちでは乗車不可な時間のため、除外します");
       return;
     }
@@ -1574,12 +1728,13 @@ function ownNearMatch_(idx, bizDate, time, money) {
   if (!list || !list.length) return "";
   const min = hhmmToMin_(time);
   if (min === null) return "";
+  const width = cfgNearMin_();
   let hit = "";
   list.forEach(function (o) {
     if (hit) return;
     let diff = Math.abs(o.min - min);
     if (diff > 720) diff = 1440 - diff;      // 日をまたぐ 23:55 と 00:05 は10分差
-    if (diff <= 15) hit = o.tab;
+    if (diff <= width) hit = o.tab;
   });
   return hit;
 }
@@ -1995,6 +2150,7 @@ function formatSummary_(name) {
 function formatTab_(sheet) {
   if (!sheet) return false;
   const name = sheet.getName();
+  const highYen = cfgHighYen_();   // 「高すぎる金額」の線。設定タブで変えられる
   if (ALL_TABS.indexOf(name) === -1) return false;
 
   const last = sheet.getLastRow();
@@ -2061,7 +2217,7 @@ function formatTab_(sheet) {
       curYear = d.getFullYear();
       const yr = new Array(LAST_COL).fill("");
       // 中身は 2026/01/01 16:59（営業日の起点直前）、表示は「2026年」
-      yr[C_DATE - 1] = new Date(curYear, 0, 1, BIZ_START_HOUR - 1, 59, 0);
+      yr[C_DATE - 1] = new Date(curYear, 0, 1, cfgBizStart_() - 1, 59, 0);
       out.push(yr); meta.push({ type: "year" });
       prevKey = null;
     }
@@ -2090,7 +2246,7 @@ function formatTab_(sheet) {
     const moneyN = parseInt(String(r[C_MONEY - 1]).replace(/[^0-9]/g, ""), 10);
     if (String(r[C_OTHER - 1]).indexOf("要確認") !== -1 ||
         String(r[C_TIME - 1]).indexOf("?") !== -1 || isNaN(moneyN) ||
-        moneyN === 0 || moneyN >= 40000) {
+        moneyN === 0 || moneyN >= highYen) {
       // 🆕 / 🔧 が付いている行は、そちらを優先して残す（印は1つしか置けないため）
       if (String(r[C_MARK - 1]).trim() === "") r[C_MARK - 1] = "⚠️";
       stat.suspect = (stat.suspect || 0) + 1;
@@ -2465,6 +2621,8 @@ function onOpen() {
   const ui = SpreadsheetApp.getUi();
 
   const m1 = ui.createMenu("🅰️ はじめの設定（初回だけ）")
+    .addItem("⚙️ 設定タブを作る・直す", "menuSetupSettings")
+    .addItem("🔁 設定を読み直す・いまの値を見る", "menuReloadSettings")
     .addItem("🔑 LINEトークンを設定", "menuSetToken")
     .addItem("⏱ 毎日17:00の自動チェックをONにする", "menuInstallTriggers")
     .addItem("⏱ 開いたときのチェックを ON", "menuOpenCheckOn")
@@ -2778,7 +2936,7 @@ function menuPasteImport() {
     <div style="font-size:12px;color:#666;margin-bottom:8px">
       オープンチャット等の文章をそのまま貼ってください。<br>
       時刻・金額・経路が読み取れたものだけ、A列を「ｵﾌﾟﾁｬ」として取り込みます。<br>
-      （DiDi／連続配車／${OPUCHA_HOURS_TEXT}の外 は自動で除外）
+      （DiDi／連続配車／${cfgHoursText_()}の外 は自動で除外）
     </div>
     <div style="margin-bottom:8px">営業日：<input type="date" id="d" style="font-size:14px;padding:5px"></div>
     <textarea id="tx" placeholder="ここに貼り付け"></textarea>
@@ -2822,8 +2980,8 @@ function importPastedText(text, dateStr) {
     return "⚠️ 取り込めるものがありませんでした。\n\n" +
            "次のどれかに当てはまると除外されます:\n" +
            "・DiDi / 連続配車 を含む\n" +
-           "・時刻が " + OPUCHA_HOURS_TEXT + " の外\n" +
-           "・金額が￥" + OPUCHA_MIN_MONEY.toLocaleString() + "未満、または読み取れない\n" +
+           "・時刻が " + cfgHoursText_() + " の外\n" +
+           "・金額が￥" + cfgOpuMinYen_().toLocaleString() + "未満、または読み取れない\n" +
            "・乗り場が書かれていない";
   }
 

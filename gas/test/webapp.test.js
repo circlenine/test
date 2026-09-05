@@ -478,5 +478,60 @@ console.log('\n■ 公開URLを実際に叩いて確かめる');
 console.log('\n■ ページに目印が入っている');
 ok(K('WB_HTML').indexOf('wbapp-ok') !== -1, 'ページ側に目印がある');
 
+console.log('\n■ ダイアログが出ない環境でも結果が残る');
+{
+  const cells = {};
+  const toasts = [];
+  ctx.SpreadsheetApp = {
+    getActiveSpreadsheet: () => ({
+      getSheetByName: n => (n === '説明')
+        ? { getRange: a1 => ({ setValue: v => { cells[a1] = String(v); },
+                               getValue: () => 'Cgroup123' }) }
+        : (TABS[n] ? makeSheet(n, TABS[n]) : null),
+      toast: (msg, title) => toasts.push({ title: title, msg: msg })
+    }),
+    BorderStyle: { SOLID: 'SOLID' },
+    // ダイアログが出せない環境を再現する
+    getUi: () => { throw new Error('ダイアログは使えません'); }
+  };
+  ctx.ScriptApp = { getProjectTriggers: () => [],
+    getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/ABC/exec' }) };
+  ctx.UrlFetchApp = { fetch: () => ({
+    getResponseCode: () => 200,
+    getContentText: () => '現在、ファイルを開くことができません。' }) };
+  const props = { LINE_TOKEN: 'tok' };
+  ctx.PropertiesService = { getScriptProperties: () => ({
+    getProperty: k => (k in props ? props[k] : null),
+    setProperty: (k, v) => { props[k] = v; }, deleteProperty: k => { delete props[k]; } })};
+  vm.runInContext('_cfgCache = null; _cfgVal = {}', ctx);
+
+  // 🩺 調べる
+  F('menuWebAppCheck')();
+  ok(toasts.length === 1, 'ダイアログが出せなくても落ちない');
+  has(toasts[0].title, '❌', 'トーストで結果が出る');
+  has(cells['Z3'], 'macros/s/ABC/exec', '説明タブZ3にURLが残る');
+  has(cells['Y3'], 'ページURL', '見出しも書く');
+  has(cells['Z4'], '新しいデプロイ', '説明タブZ4に直し方が残る');
+  has(cells['Z4'], 'ファイルを開くことができません', '返ってきた中身も残す');
+
+  // 💬 LINEに送る
+  toasts.length = 0;
+  const sentMsgs = [];
+  ctx.UrlFetchApp = { fetch: (url, opt) => {
+    if (url.indexOf('/message/push') !== -1) { sentMsgs.push(JSON.parse(opt.payload)); }
+    return { getResponseCode: () => 200, getContentText: () => '{}' };
+  }};
+  F('menuWebAppSendLine')();
+  ok(sentMsgs.length === 1, 'ダイアログ無しでLINEに送れる');
+  has(sentMsgs[0].messages[0].text, 'macros/s/ABC/exec', 'URLがそのまま届く');
+  has(toasts[0].title, '送りました', '結果をトーストで知らせる');
+
+  // 公開していないとき
+  ctx.ScriptApp = { getProjectTriggers: () => [], getService: () => ({ getUrl: () => '' }) };
+  toasts.length = 0;
+  F('menuWebAppCheck')();
+  has(cells['Z3'], 'まだ公開されていません', '未公開ならそう書く');
+}
+
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

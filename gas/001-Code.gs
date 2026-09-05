@@ -1,12 +1,16 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C019ver  （2026/09/06）  ★★★   ← もとは version 232
+ *  ★★★  C020ver  （2026/09/06）  ★★★   ← もとは version 232
  *
  *  ファイル記号: C=001-Code.gs / L=003-LineReport.gs / E=002-Extras.gs
  *  ※ Apps Script 上のファイル名も「001-Code」にそろえてください
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C020ver]
+ *   ・ページ関係のメニューを3つに分けた（スマホでダイアログが出ないため）
+ *     📱 ページのURLを見る／💬 URLをLINEに送る／🩺 開けるか調べる
  *
  *  [C019ver]
  *   ・「みんなの記録ページ」に鍵をかけられるようにした（設定タブに2項目）
@@ -352,7 +356,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C019ver";
+const CODE_VERSION = "C020ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -2819,7 +2823,9 @@ function onOpen() {
 
   // 004-WebApp.gs を入れているときだけ出す
   if (typeof menuWebAppUrl === "function") {
-    m1.addItem("📱 みんなの記録ページのURL", "menuWebAppUrl");
+    m1.addItem("📱 ページのURLを見る", "menuWebAppUrl")
+      .addItem("💬 ページのURLをLINEに送る", "menuWebAppSendLine")
+      .addItem("🩺 ページが開けるか調べる", "menuWebAppCheck");
   }
 
   const m6 = ui.createMenu("⬇️ イライラを沈めたいとき")

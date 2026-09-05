@@ -156,6 +156,7 @@ function menuWebAppUrl() {
   }
 
   const lock = wbLockText_();
+  wbWriteInfo_(url, "");     // ダイアログが出なくても、URLは説明タブに残る
   const html =
     '<style>' +
     'body{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;' +
@@ -273,6 +274,70 @@ function wbSelfTest_() {
 
 /** 画面から呼ぶ用 */
 function wbSelfTest() { return JSON.stringify(wbSelfTest_()); }
+
+
+/* ============ ダイアログに頼らない出し方 ============ */
+/*
+ * スマホだと、メニューから出すダイアログが表示されないことがある。
+ * そこで「ダイアログを使わない道」を用意する。
+ *   ・LINEに送る     … トーク上でリンクになる。文字を写し間違える余地がない
+ *   ・セルに書き出す … 説明タブのZ3・Z4に残る。あとから何度でも見られる
+ *   ・トーストで出す … ダイアログより出やすい
+ */
+
+/** 説明タブのZ3にURL、Z4に診断結果を書いておく（あとから見られるように） */
+function wbWriteInfo_(url, diag) {
+  try {
+    const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("説明");
+    if (!sh) return;
+    sh.getRange("Y3").setValue("ページURL");
+    sh.getRange("Z3").setValue(url || "（まだ公開されていません）");
+    if (diag) {
+      sh.getRange("Y4").setValue("最後の診断");
+      sh.getRange("Z4").setValue(diag);
+    }
+  } catch (e) { /* 書けなくても本題は止めない */ }
+}
+
+/** ダイアログを出そうとする。出せない環境では黙って諦める */
+function wbAlert_(title, body) {
+  try {
+    const ui = SpreadsheetApp.getUi();
+    ui.alert(title, body, ui.ButtonSet.OK);
+  } catch (e) {}
+}
+
+/**
+ * ページが開けるか調べて、結果をトーストと説明タブに出す。
+ * ダイアログが出ない環境でも、結果がセルに残る。
+ */
+function menuWebAppCheck() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const r = wbSelfTest_();
+  const head = (r.ok ? "✅ " : "❌ ") + r.title;
+  const body = (r.url ? r.url + "\n" : "") + (r.how || "");
+
+  wbWriteInfo_(r.url, head + "\n" + (r.how || "") +
+    (r.peek ? "\n──────\n返ってきた中身の頭：" + r.peek : ""));
+
+  ss.toast(body.slice(0, 400), head, 30);
+  wbAlert_(head, body + "\n\n──────────────\n" +
+    "この内容は「説明」タブの Z3・Z4 にも書いてあります。");
+}
+
+/**
+ * URLをグループLINEに送る。ダイアログを開かずに、その場で送る。
+ * LINEのトーク上ではリンクになるので、写し間違えようがない。
+ */
+function menuWebAppSendLine() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const url = wbUrl_();
+  wbWriteInfo_(url, "");
+  const msg = wbSendUrlToLine();
+  ss.toast(url || "（まだ公開されていません）", "💬 " + msg, 20);
+  wbAlert_("💬 " + msg, (url || "（まだ公開されていません）") +
+    "\n\n──────────────\nこのURLは「説明」タブの Z3 にも書いてあります。");
+}
 
 /**
  * ページのURLをグループLINEに送る。

@@ -1,12 +1,20 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C011ver  （2026/09/05）  ★★★   ← もとは version 232
+ *  ★★★  C012ver  （2026/09/05）  ★★★   ← もとは version 232
  *
  *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
  *  ※ Apps Script 上のファイル名も「Code」に統一してください（旧: コード）
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C012ver]
+ *   ・日付メモは「月日はかならず4桁」に決めた
+ *     0905（4桁）＝ 送った年の9月5日
+ *     280905 / 20280905（先頭に年）＝ 2028年9月5日
+ *     年を書いたときは、その年のとおりに入れる（勝手にずらさない）
+ *   ・読めない数字（895・0895・8905 など）には、書き方を添えて返信する
+ *     今までは黙って無視していたので、直せずに気づけなかった
  *
  *  [C011ver]
  *   ・「設定」タブを作った。よく変える数字と文言をスプシから直せる
@@ -298,7 +306,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C011ver";
+const CODE_VERSION = "C012ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -1160,40 +1168,73 @@ function parseDateNote_(text, sentAt) {
     t = t.replace(new RegExp(ARROW_ANY.source, "gu"), "");
     t = t.replace(/[\uFE0F\u200D]/g, "");     // 絵文字の飾り（異体字セレクタ等）
   }
-
-  // 数字だけ（区切りは / - . 年月日 を許す）になっていなければメモではない
   t = t.replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); })
-       .replace(/年|月/g, "/").replace(/日$/, "").trim();
+       .trim();
+
+  // 数字だけの短い1行 ＝ 日付メモを打ったつもり、とみなす。
+  // ここから先は、読めなくても黙らずに「書き方」を返す。
+  if (!/^[0-9]{1,8}$/.test(t)) return null;
 
   const now = sentAt || new Date();
   let y, mo, da;
 
-  if (/^[0-9]{2,8}$/.test(t)) {
-    if (t.length <= 4) {
-      // 2〜4桁 ＝ 日付だけ。年は送った日と同じ
-      y = now.getFullYear();
-      if (t.length === 2)      { mo = now.getMonth() + 1; da = +t; }
-      else if (t.length === 3) { mo = +t.slice(0, 1);     da = +t.slice(1); }
-      else                     { mo = +t.slice(0, 2);     da = +t.slice(2); }
-    } else {
-      // 5〜8桁 ＝ 年＋日付。8桁=YYYYMMDD / 7桁=YYYMMDD / 6桁=YYMMDD / 5桁=YMMDD
-      y  = resolveYear_(t.slice(0, t.length - 4), now.getFullYear());
-      mo = +t.slice(-4, -2);
-      da = +t.slice(-2);
-    }
-  } else if (/^[0-9]{1,4}\/[0-9]{1,2}(\/[0-9]{1,2})?$/.test(t)) {
-    const q = t.split("/");
-    if (q.length === 3) { y = resolveYear_(q[0], now.getFullYear()); mo = +q[1]; da = +q[2]; }
-    else                { y = now.getFullYear(); mo = +q[0]; da = +q[1]; }
+  if (t.length < 4) {
+    // 895 のような3桁以下。月日は4桁と決めているので受け取らない
+    return { error: true, input: t, dir: dir, why: "月日は4桁で送ってください" };
+  }
+  if (t.length === 4) {
+    y = now.getFullYear();                       // 年を書かなければ、送った年
+    mo = +t.slice(0, 2); da = +t.slice(2);
   } else {
-    return null;                 // 数字と区切り以外が混ざっている＝ただの文章
+    // 5〜8桁 ＝ 先頭が年、うしろ4桁が月日
+    y  = resolveYear_(t.slice(0, t.length - 4), now.getFullYear());
+    mo = +t.slice(-4, -2); da = +t.slice(-2);
   }
 
-  if (!(mo >= 1 && mo <= 12) || !(da >= 1 && da <= 31)) return null;
+  if (!(mo >= 1 && mo <= 12)) {
+    return { error: true, input: t, dir: dir, why: mo + "月という月はありません" };
+  }
+  if (!(da >= 1 && da <= 31)) {
+    return { error: true, input: t, dir: dir, why: da + "日という日はありません" };
+  }
   const d = new Date(y, mo - 1, da, 12, 0, 0);
-  if (d.getMonth() !== mo - 1 || d.getDate() !== da) return null;   // 2/31 のような日は無し
+  if (d.getMonth() !== mo - 1 || d.getDate() !== da) {
+    return { error: true, input: t, dir: dir, why: mo + "月" + da + "日はありません" };
+  }
 
   return { bizDate: d, dir: dir };
+}
+
+/**
+ * 日付が読めなかったときに返す案内。
+ * 「何がだめだったか」→「書き方」→「どのスクショに効かせるか」の順に並べる。
+ * 例は今日の日付で作るので、そのまま真似すれば通る。
+ */
+function dateNoteHelp_(input, why) {
+  const now = new Date();
+  const md  = pad2_(now.getMonth() + 1) + pad2_(now.getDate());       // 例: 0905
+  const yy  = String(now.getFullYear()).slice(-2);                    // 例: 26
+  const lines = [];
+
+  lines.push("📅 日付が読み取れませんでした：「" + input + "」");
+  if (why) lines.push("　" + why);
+  lines.push("");
+  lines.push("▼ 日付は4桁で固定です");
+  lines.push("　" + (now.getMonth() + 1) + "月" + now.getDate() + "日 → " + md);
+  lines.push("　年も変えるときは、先頭に年を足す");
+  lines.push("　　" + now.getFullYear() + "年 → " + yy + md +
+             "（" + now.getFullYear() + md + " でも可）");
+  lines.push("");
+  lines.push("▼ どのスクショの日付かを伝える（どちらでも）");
+  lines.push("　① そのスクショに リプライ して　" + md);
+  lines.push("　② 矢印を添えて送る");
+  lines.push("　　↑" + md + "　… 矢印が指す上のスクショ（さっき送ったもの）");
+  lines.push("　　↓" + md + "　… 矢印が指す下のスクショ（このあと送るもの）");
+  lines.push("");
+  lines.push("矢印は ↑↓ でも ⬆️⬇️ でもかまいません。");
+  lines.push("何も送らなければ、送った日の営業曜日で登録します。");
+
+  return lines.join("\n");
 }
 
 /** 年の下けた（"8" "28" "028" "2028"）から、今年にいちばん近い年を決める */
@@ -1220,6 +1261,10 @@ function resolveYear_(ys, thisYear) {
  */
 function handleDateNote_(ev, note) {
   const reply = ev.replyToken || "";
+
+  // 読めなかったときは、何がだめで、どう書けばよいかを返す
+  if (note.error) { lineReply_(reply, dateNoteHelp_(note.input, note.why)); return; }
+
   const uid   = (ev.source && ev.source.userId) || "anon";
   const cache = CacheService.getScriptCache();
   const quoted = (ev.message && ev.message.quotedMessageId) || "";

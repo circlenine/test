@@ -1005,10 +1005,10 @@ F('panelWatch')();
 t(true, '結合の中でも落ちない');
 
 console.log('\n■ バージョン');
-t(vm.runInContext('UPD_VERSION', ctx) === 'U003ver', 'U003ver になっている');
+t(vm.runInContext('UPD_VERSION', ctx) === 'U004ver', 'U004ver になっている');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuUpdateStatus')();
-has(alerts[0].b, 'U003ver', '状態画面にバージョンが出る');
+has(alerts[0].b, 'U004ver', '状態画面にバージョンが出る');
 
 console.log('\n■ 番号でも見分けられる（文言を書き換えてしまったとき用）');
 {
@@ -1034,6 +1034,40 @@ console.log('\n■ 番号でも見分けられる（文言を書き換えてし�
   // 文言と番号が食い違ったら、文言のほうを信じる（人が読むのはそちらなので）
   t(P('[1] 前のコードに戻す').fn === 'menuRestoreCode', '文言が優先される');
 }
+
+console.log('\n■ 戻したときも、デプロイをやり直す');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuUpdateCode')();                       // 更新して版3→4、デプロイD1も4へ
+t(project.version === 4, '更新で版4になった');
+t(project.deployments.filter(x => x.deploymentId === 'D1')[0]
+    .deploymentConfig.versionNumber === 4, 'デプロイも4');
+
+F('menuRestoreCode')();
+t(project.files.filter(f => f.name === '001-Code')[0].source === 'ふるい', 'コードが戻った');
+t(project.version === 5, '戻したぶんも新しい版として作る');
+t(project.deployments.filter(x => x.deploymentId === 'D1')[0]
+    .deploymentConfig.versionNumber === 5,
+  'デプロイも戻した版に切り替わる（ここが抜けていた）');
+has(alerts[alerts.length - 1].b, 'デプロイもやり直しました', 'そう伝える');
+
+console.log('\n■ 戻せてもデプロイに失敗したときは、はっきり言う');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuUpdateCode')();
+apiFail = { path: '/versions', method: 'post', code: 403, msg: 'だめ' };
+F('menuRestoreCode')();
+t(project.files.filter(f => f.name === '001-Code')[0].source === 'ふるい', 'コードは戻る');
+has(alerts[alerts.length - 1].b, '動いているものは古いままです', '危ない状態だと伝える');
+has(alerts[alerts.length - 1].b, '新バージョン', '手で直す方法も出す');
+
+console.log('\n■ デプロイのURLは変わらない（LINEの受け口が生きたままになる）');
+reset([['001-Code.gs', 'あたらしい']]);
+const idsBefore = project.deployments.map(d => d.deploymentId).join(',');
+F('menuUpdateCode')();
+const idsAfter = project.deployments.map(d => d.deploymentId).join(',');
+t(idsBefore === idsAfter, 'デプロイを作り直さず、同じものの版だけ上げる');
+t(project.deployments.length === 2, '数も増えない');
+t(apiCalls.filter(c => c.path === '/deployments' && c.method === 'post').length === 0,
+  '新しいデプロイは作らない（作るとURLが変わってしまう）');
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

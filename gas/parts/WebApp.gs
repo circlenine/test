@@ -329,37 +329,104 @@ function menuWebAppCheck() {
  * URLをグループLINEに送る。ダイアログを開かずに、その場で送る。
  * LINEのトーク上ではリンクになるので、写し間違えようがない。
  */
+/**
+ * メニューから送るとき。ここでは画面が出せるので、送る前に必ず聞く。
+ */
 function menuWebAppSendLine() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const url = wbUrl_();
   wbWriteInfo_(url, "");
-  const msg = wbSendUrlToLine();
-  ss.toast(url || "（まだ公開されていません）", "💬 " + msg, 20);
-  wbAlert_("💬 " + msg, (url || "（まだ公開されていません）") +
-    "\n\n──────────────\nこのURLは「説明」タブの Z3 にも書いてあります。");
+  if (!url) {
+    wbAlert_("💬 まだ公開されていません",
+      "先に「デプロイ」→「新しいデプロイ」でページを公開してください。");
+    return;
+  }
+
+  let ui = null;
+  try { ui = SpreadsheetApp.getUi(); } catch (e) {}
+  let where = "test";
+  if (ui) {
+    const a = ui.alert("💬 ページのURLをLINEに送る",
+      "まず自分のLINEにだけ送って、見え方を確かめますか？\n\n" +
+      "「はい」… 自分だけに送る（テスト）\n" +
+      "「いいえ」… グループ全員に送る（取り消せません）",
+      ui.ButtonSet.YES_NO_CANCEL);
+    if (a === ui.Button.CANCEL) return;
+    where = (a === ui.Button.YES) ? "test" : "group";
+  }
+
+  const msg = wbSendUrlToLine(where);
+  ss.toast(url, "💬 " + msg, 20);
+  wbAlert_("💬 " + msg,
+    url + "\n\n──────────────\nこのURLは「説明」タブの Z3 にも書いてあります。");
 }
 
 /**
- * ページのURLをグループLINEに送る。
- * LINEのトーク上ではリンクになるので、みんなタップするだけで開ける。
+ * 「そうさ」タブのチェックから送るとき。
+ * 画面が出せないので、2回押してもらうことで確認の代わりにする。
+ *   1回目 … 自分だけに送る（テスト）
+ *   3分以内にもう1回 … グループへ送る
  */
-function wbSendUrlToLine() {
-  const url = wbUrl_();
-  if (!url) return "まだ公開されていません";
+function menuWebAppSendLineStep() {
+  const pr = PropertiesService.getScriptProperties();
+  const now = new Date().getTime();
+  const at = parseInt(pr.getProperty("WB_SEND_ARMED"), 10);
+  const armed = at > 0 && (now - at) < 3 * 60 * 1000;
 
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const info = ss.getSheetByName("説明");
-  const to = info ? String(info.getRange("Z1").getValue() || "").trim() : "";
-  if (!to) {
-    // 送信先が無いときに全員配信へ落ちないよう、ここで止める
-    return "送信先が未設定です（メニュー「👥 グループIDを設定」）";
+  if (armed) {
+    pr.deleteProperty("WB_SEND_ARMED");
+    return "👥 " + wbSendUrlToLine("group");
   }
+
+  const msg = wbSendUrlToLine("test");
+  pr.setProperty("WB_SEND_ARMED", String(now));
+  return "🧪 " + msg +
+    "\n▶ グループ全員に送るなら、3分以内にもう一度チェックしてください。\n" +
+    "　 何もしなければ、グループには送りません。";
+}
+
+/* ---------- LINEへの送信 ---------- */
+/*
+ * グループへ送るのは、みんなに届いてしまう＝取り消せない操作。
+ * チェックひとつで一発で飛ぶのは危ないので、
+ *   1回目 … 自分だけに送る（テスト）
+ *   3分以内にもう1回 … グループへ送る
+ * という形にしてある。押し間違いでグループに飛ぶことがない。
+ */
+
+/** テスト送信の宛先（自分のLINE）。設定タブがあればそちらを優先 */
+function wbTestTarget_() {
+  const v = String(wbCfg_("テスト送信先（自分のLINE）", "")).trim();
+  if (v) return v;
+  // 001-Code.gs の登録済み一覧から「ﾏｰｸ」を探す
+  try {
+    for (const id in SENDER_MAP) {
+      if (SENDER_MAP[id] === "ﾏｰｸ") return id;
+    }
+  } catch (e) {}
+  return "";
+}
+
+/** グループの宛先（説明タブ Z1） */
+function wbGroupTarget_() {
+  try {
+    const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("説明");
+    return sh ? String(sh.getRange("Z1").getValue() || "").trim() : "";
+  } catch (e) { return ""; }
+}
+
+/** 送る文面 */
+function wbUrlMessage_(url) {
+  const pass = String(wbCfg_("ページの合言葉", "")).trim();
+  return "📱 みんなの記録ページ\n" + url +
+    (pass ? "\n\n合言葉は各自に伝えます（このメッセージには書きません）" : "");
+}
+
+/** 実際に送る。宛先が無ければ送らない（全員配信に落ちないように） */
+function wbPushLine_(to, text) {
+  if (!to) return "宛先が分かりませんでした";
   const token = PropertiesService.getScriptProperties().getProperty("LINE_TOKEN") || "";
   if (!token) return "LINEトークンが未設定です（メニュー「🔑 LINEトークンを設定」）";
-
-  const pass = String(wbCfg_("ページの合言葉", "")).trim();
-  const text = "📱 みんなの記録ページ\n" + url +
-    (pass ? "\n\n合言葉は各自に伝えます（このメッセージには書きません）" : "");
 
   const res = UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
     method: "post",
@@ -368,9 +435,32 @@ function wbSendUrlToLine() {
     muteHttpExceptions: true
   });
   if (res.getResponseCode() !== 200) {
-    return "送れませんでした（" + res.getResponseCode() + "）";
+    let why = res.getContentText().slice(0, 120);
+    try { why = JSON.parse(res.getContentText()).message; } catch (e) {}
+    return "送れませんでした（" + res.getResponseCode() + "）" + why;
   }
-  return "グループLINEに送りました";
+  return "";
+}
+
+/**
+ * ページのURLをLINEに送る。
+ * where は "test"（自分だけ）か "group"（グループ全員）。
+ */
+function wbSendUrlToLine(where) {
+  const url = wbUrl_();
+  if (!url) return "まだ公開されていません";
+
+  if (where === "group") {
+    const to = wbGroupTarget_();
+    if (!to) return "グループの送信先が未設定です（メニュー「👥 グループIDを設定」）";
+    const err = wbPushLine_(to, wbUrlMessage_(url));
+    return err || "グループLINEに送りました";
+  }
+
+  const to = wbTestTarget_();
+  if (!to) return "テストの送信先（自分のLINE）が分かりませんでした";
+  const err = wbPushLine_(to, "【テスト送信】\n" + wbUrlMessage_(url));
+  return err || "自分のLINEにだけ送りました（テスト）";
 }
 
 /* ============ 記録を集める ============ */

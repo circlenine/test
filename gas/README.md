@@ -6,11 +6,11 @@
 
 | 記号 | ファイル | いま | Apps Script 側の名前 |
 |---|---|---|---|
-| **C** | `001-Code.gs`（統合スクリプト） | C022ver | `001-Code` |
+| **C** | `001-Code.gs`（統合スクリプト） | C023ver | `001-Code` |
 | **E** | `002-Extras.gs` | E004ver | `002-Extras` |
 | **L** | `003-LineReport.gs` | L005ver | `003-LineReport` |
-| **W** | `004-WebApp.gs`（みんなの記録ページ） | W005ver | `004-WebApp` |
-| **U** | `005-Updater.gs`（コードの自動更新・そうさボタン） | U006ver | `005-Updater` |
+| **W** | `004-WebApp.gs`（みんなの記録ページ） | W006ver | `004-WebApp` |
+| **U** | `005-Updater.gs`（コードの自動更新・そうさボタン） | U007ver | `005-Updater` |
 
 **貼るのはこの5つだけ。** 番号の順に並ぶので、上から順に貼っていけば漏れない。
 `gas/parts/` の中は、`002-Extras.gs` を組み立てるための材料なので貼らなくてよい。

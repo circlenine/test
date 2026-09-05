@@ -380,7 +380,8 @@ console.log('\n■ URLをグループLINEに送る');
 
   setCfg([]);
   TABS['説明'] = [];   // グループIDなし
-  has(F('wbSendUrlToLine')(), '送信先が未設定', '送信先が無ければ送らない');
+  has(F('wbSendUrlToLine')('group'), 'グループの送信先が未設定',
+      'グループの宛先が無ければ送らない');
   ok(sent.length === 0, '全員配信に落ちない');
 
   // 説明タブのZ1にグループIDが入っている状態にする
@@ -399,7 +400,7 @@ console.log('\n■ URLをグループLINEに送る');
   });
   vm.runInContext('_cfgCache = null; _cfgVal = {}', ctx);
 
-  has(F('wbSendUrlToLine')(), 'グループLINEに送りました', '送れた');
+  has(F('wbSendUrlToLine')('group'), 'グループLINEに送りました', 'グループへ送れた');
   ok(sent.length === 1, '1通だけ送る');
   ok(sent[0].to === 'Cgroup123', 'グループ宛に送る');
   has(sent[0].messages[0].text, 'https://script.google.com/macros/s/ABC/exec',
@@ -418,7 +419,7 @@ console.log('\n■ URLをグループLINEに送る');
   });
   vm.runInContext('_cfgCache = null; _cfgVal = {}', ctx);
   sent.length = 0;
-  F('wbSendUrlToLine')();
+  F('wbSendUrlToLine')('group');
   ok(sent[0].messages[0].text.indexOf('himitsu') === -1,
      '合言葉そのものはLINEに流さない');
   has(sent[0].messages[0].text, '合言葉は各自に伝えます', '合言葉があることだけ伝える');
@@ -426,7 +427,7 @@ console.log('\n■ URLをグループLINEに送る');
   // トークンが無ければ送らない
   delete props['LINE_TOKEN'];
   sent.length = 0;
-  has(F('wbSendUrlToLine')(), 'LINEトークンが未設定', 'トークンが無ければ送らない');
+  has(F('wbSendUrlToLine')('group'), 'LINEトークンが未設定', 'トークンが無ければ送らない');
   ok(sent.length === 0, '送っていない');
 }
 
@@ -531,6 +532,68 @@ console.log('\n■ ダイアログが出ない環境でも結果が残る');
   toasts.length = 0;
   F('menuWebAppCheck')();
   has(cells['Z3'], 'まだ公開されていません', '未公開ならそう書く');
+}
+
+console.log('\n■ まず自分だけ／もう一度でグループ');
+{
+  const sent2 = [];
+  ctx.UrlFetchApp = { fetch: (url, opt) => {
+    if (url.indexOf('/message/push') !== -1) sent2.push(JSON.parse(opt.payload));
+    return { getResponseCode: () => 200, getContentText: () => '{}' };
+  }};
+  const props2 = { LINE_TOKEN: 'tok' };
+  ctx.PropertiesService = { getScriptProperties: () => ({
+    getProperty: k => (k in props2 ? props2[k] : null),
+    setProperty: (k, v) => { props2[k] = String(v); },
+    deleteProperty: k => { delete props2[k]; } })};
+  ctx.SpreadsheetApp = Object.assign({}, ctx.SpreadsheetApp, {
+    getActiveSpreadsheet: () => ({
+      getSheetByName: n => (n === '説明')
+        ? { getRange: () => ({ getValue: () => 'Cgroup123', setValue: () => {} }) }
+        : (TABS[n] ? makeSheet(n, TABS[n]) : null),
+      toast: () => {}
+    }),
+    getUi: () => { throw new Error('画面は出せません'); }
+  });
+  ctx.ScriptApp = { getProjectTriggers: () => [],
+    getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/ABC/exec' }) };
+  setCfg([]);
+  vm.runInContext('_cfgCache = null; _cfgVal = {}', ctx);
+
+  ok(F('wbTestTarget_')() === 'Uec8443d00bcec9f0463fd47775a41909',
+    'テストの宛先は登録済みの「ﾏｰｸ」');
+
+  // 1回目
+  let msg = F('menuWebAppSendLineStep')();
+  ok(sent2.length === 1, '1回だけ送った');
+  ok(sent2[0].to === 'Uec8443d00bcec9f0463fd47775a41909', '自分のLINEへ');
+  ok(sent2[0].to !== 'Cgroup123', 'グループには送っていない');
+  has(sent2[0].messages[0].text, '【テスト送信】', 'テストだと分かる文が付く');
+  has(msg, '自分のLINEにだけ', '結果でもそう言う');
+  has(msg, '3分以内にもう一度', '次にどうすればよいか出る');
+
+  // 2回目（3分以内）
+  msg = F('menuWebAppSendLineStep')();
+  ok(sent2.length === 2, '2回目も送った');
+  ok(sent2[1].to === 'Cgroup123', '今度はグループへ');
+  ok(sent2[1].messages[0].text.indexOf('【テスト送信】') === -1, 'テストの断りは付かない');
+  has(msg, 'グループLINEに送りました', 'そう言う');
+
+  // 3回目は、また自分だけに戻る
+  msg = F('menuWebAppSendLineStep')();
+  ok(sent2[2].to === 'Uec8443d00bcec9f0463fd47775a41909',
+     '一度グループに送ったら、また自分だけからやり直し');
+
+  // 時間が空いたら、グループには飛ばない
+  props2['WB_SEND_ARMED'] = String(Date.now() - 10 * 60 * 1000);
+  msg = F('menuWebAppSendLineStep')();
+  ok(sent2[3].to === 'Uec8443d00bcec9f0463fd47775a41909',
+     '3分すぎたら、グループには送らない');
+
+  // 設定でテスト宛先を変えられる
+  setCfg([['テスト送信先（自分のLINE）', 'Uxxxx']]);
+  vm.runInContext('_cfgCache = null; _cfgVal = {}', ctx);
+  ok(F('wbTestTarget_')() === 'Uxxxx', '設定タブで宛先を変えられる');
 }
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');

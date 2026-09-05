@@ -549,13 +549,13 @@ let items = F('panelItems_')();
 // 004-WebApp や 001-Code の機能は出てこないのが正しい
 t(items.length === 6, 'いつも6つ並ぶ（' + items.length + '個）');
 t(items[0].fn === 'menuUpdateCode', '1つめは「コードを更新する」');
-t(items.some(x => x.fn === 'menuWebAppSendLine'),
+t(items.some(x => x.fn === 'menuWebAppSendLineStep'),
   '入れていない機能も並べる（数が変わると行がずれるため）');
 t(items.map(x => x.fn).join(',') ===
   'menuUpdateCode,menuUpdateStatus,menuFormatAll,menuRestoreCode,' +
-  'menuWebAppSendLine,menuWebAppCheck', 'スプシに置いてある番号どおりの並び');
+  'menuWebAppSendLineStep,menuWebAppCheck', 'スプシに置いてある番号どおりの並び');
 t(F('panelHas_')('menuUpdateCode') === true, '入っている機能は分かる');
-t(F('panelHas_')('menuWebAppSendLine') === false, '入っていない機能も分かる');
+t(F('panelHas_')('menuWebAppSendLineStep') === false, '入っていない機能も分かる');
 t(F('panelHas_')('menuUpdateCode') === true, 'ある関数は true');
 t(F('panelHas_')('そんな関数はない') === false, '無い関数は false');
 
@@ -1017,10 +1017,10 @@ F('panelWatch')();
 t(true, '結合の中でも落ちない');
 
 console.log('\n■ バージョン');
-t(vm.runInContext('UPD_VERSION', ctx) === 'U006ver', 'U006ver になっている');
+t(vm.runInContext('UPD_VERSION', ctx) === 'U007ver', 'U007ver になっている');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuUpdateStatus')();
-has(alerts[0].b, 'U006ver', '状態画面にバージョンが出る');
+has(alerts[0].b, 'U007ver', '状態画面にバージョンが出る');
 
 console.log('\n■ 番号でも見分けられる（文言を書き換えてしまったとき用）');
 {
@@ -1030,12 +1030,12 @@ console.log('\n■ 番号でも見分けられる（文言を書き換えてし�
   t(P('[2] 更新できる状態か調べる').fn === 'menuUpdateStatus', '[2] は状態');
   t(P('[3] 全タブをまとめて整形する').fn === 'menuFormatAll', '[3] は整形');
   t(P('[4] 前のコードに戻す').fn === 'menuRestoreCode', '[4] は巻き戻し');
-  t(P('[5] ページのURLをLINEに送る').fn === 'menuWebAppSendLine', '[5] はLINE送信');
+  t(P('[5] ページのURLをLINEに送る').fn === 'menuWebAppSendLineStep', '[5] はLINE送信');
   t(P('[6] ページが開けるか調べる').fn === 'menuWebAppCheck', '[6] はページ確認');
 
   // 文言を分からなく書き換えても、番号が残っていれば動く
   t(P('[4] じぶんで書いた名前').fn === 'menuRestoreCode', '番号だけでも引ける');
-  t(P('（5）なにか').fn === 'menuWebAppSendLine', '全角のカッコでも引ける');
+  t(P('（5）なにか').fn === 'menuWebAppSendLineStep', '全角のカッコでも引ける');
   t(P('6. なにか').fn === 'menuWebAppCheck', '「6.」の形でも引ける');
   t(P('[9] なにか') === null, '無い番号は null');
   t(P('なにか [3] うしろ') === null, '先頭に無い番号は使わない');

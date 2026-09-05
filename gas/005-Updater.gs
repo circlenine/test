@@ -2,7 +2,12 @@
  * ================================================================
  *  コードの自動更新（005-Updater.gs）
  *
- *  ★★★  U006ver  （2026/09/06）  ★★★
+ *  ★★★  U007ver  （2026/09/06）  ★★★
+ *
+ *  [U007ver]
+ *   ・[5] を「1回目は自分だけ／3分以内にもう1回でグループ」に変えた
+ *     チェックひとつでグループ全員に飛ぶのは、取り消せないので危ない
+ *   ・ボタンが文字を返したときは、それも結果らんに出すようにした
  *
  *  [U006ver]
  *   ・「更新できる状態か調べる」が、名前を並べるだけなのに
@@ -85,7 +90,7 @@
  * ================================================================
  */
 
-const UPD_VERSION = "U006ver";
+const UPD_VERSION = "U007ver";
 
 /** ドライブ上の置き場所（GitHubを使わないときの読み元） */
 const UPD_FOLDER  = "taxi-gas";
@@ -700,9 +705,9 @@ function panelItems_() {
     { key: "前のコードに戻す",     label: "[4] 前のコードに戻す",        fn: "menuRestoreCode",
       sec: 70,
       note: "更新で壊れたとき用。直前の状態に戻します" },
-    { key: "URLをLINE",            label: "[5] ページのURLをLINEに送る", fn: "menuWebAppSendLine",
-      sec: 20,
-      note: "グループLINEにリンクを送ります" },
+    { key: "URLをLINE",            label: "[5] ページのURLをLINEに送る",
+      fn: "menuWebAppSendLineStep", sec: 20,
+      note: "1回目は自分だけ。3分以内にもう1回でグループ全員へ" },
     { key: "開けるか調べる",       label: "[6] ページが開けるか調べる",  fn: "menuWebAppCheck",
       sec: 30,
       note: "みんなの記録ページが本当に開けるか、実際に試します" }
@@ -723,7 +728,7 @@ const PANEL_FROM = {
   menuUpdateStatus:   "005-Updater",
   menuFormatAll:      "001-Code",
   menuRestoreCode:    "005-Updater",
-  menuWebAppSendLine: "004-WebApp",
+  menuWebAppSendLineStep: "004-WebApp",
   menuWebAppCheck:    "004-WebApp"
 };
 
@@ -1251,9 +1256,10 @@ function panelRun_(row) {
     let out = "";
     try {
       const fn = eval(item.fn);
-      fn();
+      const said = fn();
       const took = Math.round((new Date().getTime() - t0) / 1000);
-      out = "✅ " + item.label + " が終わりました（" + updSecText_(took) + "）";
+      out = "✅ " + item.label + " が終わりました（" + updSecText_(took) + "）" +
+        (typeof said === "string" && said ? "\n" + said : "");
     } catch (err) {
       logErr_("panel:" + item.fn, err);
       out = "❌ " + item.label + " に失敗しました\n" + (err && err.message ? err.message : err);

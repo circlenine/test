@@ -1,12 +1,20 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C016ver  （2026/09/06）  ★★★   ← もとは version 232
+ *  ★★★  C017ver  （2026/09/06）  ★★★   ← もとは version 232
  *
  *  ファイル記号: C=001-Code.gs / L=003-LineReport.gs / E=002-Extras.gs
  *  ※ Apps Script 上のファイル名も「001-Code」にそろえてください
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C017ver]
+ *   ・設定の読み出しが遅かったのを直した（C011で入れた作りの手直し）
+ *     並び替えの比較のたびに設定を引き直していたので、1回引いたら覚えておく
+ *   ・「🩺 右下のポップアップを調べる」を「🩺 動いているか調べる」に広げた
+ *     毎日17時の自動チェック／LINEの最終受信／最終更新スタンプも見られる
+ *     「最終更新が止まっている」ときに、どこで止まったのかが分かる
+ *   ・LINEからメッセージが届いた時刻を記録するようにした
  *
  *  [C016ver]
  *   ・右下のポップアップが出ないときに、原因を調べられるようにした
@@ -330,7 +338,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C016ver";
+const CODE_VERSION = "C017ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -398,11 +406,15 @@ const SETTINGS_DEFS = [
 
 // 1回の実行のあいだだけ覚えておく（毎回シートを読みに行かないため）
 let _cfgCache = null;
+// 引いた結果もそのまま覚えておく。
+// 並び替えの比較（timeRank_）から何度も呼ばれるので、毎回さがし直すと遅い。
+let _cfgVal = {};
 
 /** 「設定」タブを読む。無ければ空のまま（＝初期値が使われる） */
 function cfgLoad_() {
   if (_cfgCache) return _cfgCache;
   _cfgCache = {};
+  _cfgVal = {};
   try {
     const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SETTINGS_TAB);
     if (sh) {
@@ -420,6 +432,9 @@ function cfgLoad_() {
 
 /** 設定を1つ取る。空欄・読めない値なら初期値 */
 function cfg_(key) {
+  cfgLoad_();                               // 覚えていなければ、ここで読む
+  if (key in _cfgVal) return _cfgVal[key];  // 2回目からは、さがさずそのまま返す
+
   const def = (function () {
     for (let i = 0; i < SETTINGS_DEFS.length; i++) {
       if (SETTINGS_DEFS[i].key === key) return SETTINGS_DEFS[i];
@@ -428,20 +443,26 @@ function cfg_(key) {
   })();
   if (!def) return "";
 
-  const raw = cfgLoad_()[key];
-  if (raw === undefined || raw === null || String(raw).trim() === "") return def.def;
-
-  if (def.kind === "num") {
+  const raw = _cfgCache[key];
+  let val;
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    val = def.def;
+  } else if (def.kind === "num") {
     const n = parseInt(String(raw).replace(/[^0-9\-]/g, ""), 10);
-    return isNaN(n) ? def.def : n;
-  }
-  if (def.kind === "time") {
+    val = isNaN(n) ? def.def : n;
+  } else if (def.kind === "time") {
     // セルが時刻書式だと Date で返ってくるので、そのときは時分を取り出す
-    if (raw instanceof Date) return pad2_(raw.getHours()) + ":" + pad2_(raw.getMinutes());
-    const m = String(raw).trim().match(/^(\d{1,2})[:：](\d{2})$/);
-    return m ? pad2_(+m[1] % 24) + ":" + m[2] : def.def;
+    if (raw instanceof Date) {
+      val = pad2_(raw.getHours()) + ":" + pad2_(raw.getMinutes());
+    } else {
+      const m = String(raw).trim().match(/^(\d{1,2})[:：](\d{2})$/);
+      val = m ? pad2_(+m[1] % 24) + ":" + m[2] : def.def;
+    }
+  } else {
+    val = String(raw);
   }
-  return String(raw);
+  _cfgVal[key] = val;
+  return val;
 }
 
 /** "17:00" → 1020（0時からの分） */
@@ -504,7 +525,7 @@ function menuSetupSettings() {
   sh.getRange(1, 1, rows.length, 4).setVerticalAlignment("middle").setWrap(true);
   sh.setFrozenRows(1);
 
-  _cfgCache = null;   // 次からは新しい値で動く
+  _cfgCache = null; _cfgVal = {};   // 次からは新しい値で動く
   SpreadsheetApp.getUi().alert(
     (isNew ? "「設定」タブを作りました。\n\n" : "「設定」タブを整えました。\n\n") +
     "黄色いC列の数字や文字を直すと、次から新しい値で動きます。\n" +
@@ -513,7 +534,7 @@ function menuSetupSettings() {
 
 /** 設定を読み直す（タブを直したあと、すぐ効かせたいとき用） */
 function menuReloadSettings() {
-  _cfgCache = null;
+  _cfgCache = null; _cfgVal = {};
   const lines = SETTINGS_DEFS.map(function (d) { return "・" + d.key + "：" + cfg_(d.key); });
   SpreadsheetApp.getUi().alert("いまの設定\n\n" + lines.join("\n"));
 }
@@ -1023,6 +1044,11 @@ function doPost(e) {
   try {
     lock.waitLock(20000);
     const body = JSON.parse(e.postData.contents);
+    // LINEから届いた時刻を残す。「連携が生きているか」を後で確かめられるようにする
+    try {
+      PropertiesService.getScriptProperties()
+        .setProperty("LAST_LINE", new Date().toISOString());
+    } catch (e3) {}
     (body.events || []).forEach(function (ev) {
       try { handleEvent_(ev); } catch (err) { logErr_("handleEvent", err); }
     });
@@ -2727,7 +2753,7 @@ function onOpen() {
     .addItem("⏱ 毎日17:00の自動チェックをONにする", "menuInstallTriggers")
     .addItem("⏱ 開いたときのチェックを ON", "menuOpenCheckOn")
     .addItem("⏸ 開いたときのチェックを OFF", "menuOpenCheckOff")
-    .addItem("🩺 右下のポップアップを調べる", "menuOpenCheckStatus");
+    .addItem("🩺 動いているか調べる（ポップアップ・LINE・自動チェック）", "menuOpenCheckStatus");
 
   const m2 = ui.createMenu("🅱️ ふだんの整形")
     .addItem("🧹 全タブをまとめて整形する", "menuFormatAll")
@@ -2819,9 +2845,33 @@ function onOpenCheck() {
 }
 
 /** 開いたときのチェックを ON にする */
+/** 日時を「9/5 21:03（3時間前）」の形にする。無ければ「まだありません」 */
+function agoText_(iso) {
+  if (!iso) return "まだありません";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "まだありません";
+  const min = Math.round((Date.now() - d.getTime()) / 60000);
+  let ago;
+  if (min < 60)        ago = min + "分前";
+  else if (min < 1440) ago = Math.round(min / 60) + "時間前";
+  else                 ago = Math.round(min / 1440) + "日前";
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), "M/d HH:mm") + "（" + ago + "）";
+}
+
+/** そのトリガーが何個入っているか */
+function triggerCount_(fn) {
+  let n = 0;
+  try {
+    ScriptApp.getProjectTriggers().forEach(function (t) {
+      if (t.getHandlerFunction() === fn) n++;
+    });
+  } catch (e) { return -1; }
+  return n;
+}
+
 /**
- * 右下のポップアップが出ないときに、どこで止まっているかを調べる。
- * スマホからでも原因が分かるように、実行ログを見に行かなくてよい形にしてある。
+ * 「動いていない気がする」ときに、どこで止まっているかを調べる。
+ * スマホからでも分かるように、実行ログを見に行かなくてよい形にしてある。
  */
 function menuOpenCheckStatus() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -2829,26 +2879,32 @@ function menuOpenCheckStatus() {
   const pr = PropertiesService.getScriptProperties();
   const L = [];
 
-  // ① トリガーが入っているか
-  let n = 0;
-  try {
-    ScriptApp.getProjectTriggers().forEach(function (t) {
-      if (t.getHandlerFunction() === "onOpenCheck") n++;
-    });
-  } catch (e) { L.push("⚠️ トリガーを調べられませんでした：" + e.message); }
+  // ① 開いたときのチェック
+  const n = triggerCount_("onOpenCheck");
   L.push(n > 0 ? "✅ 開いたときのチェック：ON（" + n + "個）"
-               : "❌ 開いたときのチェック：OFF ← これが原因です");
-
-  // ② 最後に動いたのはいつか
+               : "❌ 開いたときのチェック：OFF");
   const last = pr.getProperty("LAST_OPENCHECK") || "";
-  if (last) {
-    const p = last.split("|");
-    const d = new Date(p[0]);
-    L.push("　最後に動いた：" + Utilities.formatDate(d, Session.getScriptTimeZone(),
-             "M/d HH:mm") + "（" + (p[1] || "?") + "タブ）");
-  } else {
-    L.push("　まだ一度も動いていません");
-  }
+  const p = last.split("|");
+  L.push("　最後に動いた：" + agoText_(p[0]) + (p[1] ? "（" + p[1] + "タブ）" : ""));
+
+  // ② 毎日17時の自動チェック
+  const n2 = triggerCount_("autoFormatJob");
+  L.push("");
+  L.push(n2 > 0 ? "✅ 毎日17時の自動チェック：ON（" + n2 + "個）"
+                : "❌ 毎日17時の自動チェック：OFF");
+
+  // ③ LINEからちゃんと届いているか
+  L.push("");
+  L.push("LINEから最後に届いた：" + agoText_(pr.getProperty("LAST_LINE")));
+  L.push("　※ここが古いままなら、記録が入っていないということです");
+
+  // ④ 最終更新スタンプ（B1）が、いつのものか
+  const cur0 = ss.getActiveSheet().getName();
+  const stampTab = ALL_TABS.indexOf(cur0) !== -1 ? cur0 : PERSONAL_TABS[0];
+  try {
+    const sh0 = ss.getSheetByName(stampTab);
+    if (sh0) L.push("　" + stampTab + "タブのB1：" + String(sh0.getRange("B1").getValue()));
+  } catch (e) {}
 
   // ③ いま開いているタブ
   const cur = ss.getActiveSheet().getName();
@@ -2881,13 +2937,14 @@ function menuOpenCheckStatus() {
   }
 
   if (n === 0) {
-    const a = ui.alert("🩺 右下のポップアップを調べる",
-      L.join("\n") + "\n\n──────────────\nいま ON にしますか？",
+    const a = ui.alert("🩺 動いているか調べる",
+      L.join("\n") + "\n\n──────────────\n" +
+      "開いたときのチェックが OFF です。いま ON にしますか？",
       ui.ButtonSet.YES_NO);
     if (a === ui.Button.YES) menuOpenCheckOn();
     return;
   }
-  ui.alert("🩺 右下のポップアップを調べる", L.join("\n"), ui.ButtonSet.OK);
+  ui.alert("🩺 動いているか調べる", L.join("\n"), ui.ButtonSet.OK);
 }
 
 function menuOpenCheckOn() {

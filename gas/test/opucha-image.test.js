@@ -109,9 +109,13 @@ ctx.PropertiesService = { getScriptProperties: () => ({
 })};
 ctx.Utilities = {
   base64Encode: () => 'BASE64',
-  formatDate: (d, tz, f) => String(d),
+  // M/d HH:mm だけ使うので、そこだけ本物っぽく作る
+  formatDate: (d, tz, f) => (d.getMonth() + 1) + '/' + d.getDate() + ' ' +
+    ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2),
   sleep: () => {}
 };
+ctx.Session = { getScriptTimeZone: () => 'Asia/Tokyo' };
+ctx.ScriptApp = { getProjectTriggers: () => [] };
 
 /* ---- 偽の UrlFetchApp（プロフィール取得と返信を記録する） ---- */
 const sent = [];        // 送った返信の本文
@@ -641,6 +645,42 @@ console.log('\n■ 開いたときのチェック（右下のポップアップ�
   ctx.SpreadsheetApp = realSA;
   ctx.PropertiesService = realProps;
   vm.runInContext('_cfgCache = null', ctx);
+}
+
+console.log('\n■ 設定は1回引いたら覚えておく（並び替えから何度も呼ばれるため）');
+{
+  // シートを読みに行った回数を数える
+  let reads = 0;
+  const realSA = ctx.SpreadsheetApp;
+  resetSheets();
+  TABS['設定'] = [cfgRow('項目', '値'), cfgRow('営業曜日の始まり（時）', 16)];
+  ctx.SpreadsheetApp = Object.assign({}, realSA, {
+    getActiveSpreadsheet: () => ({
+      getSheetByName: n => { if (n === '設定') reads++; return TABS[n] ? makeSheet(n, TABS[n]) : null; },
+      toast: () => {}
+    })
+  });
+  vm.runInContext('_cfgCache = null; _cfgVal = {}', ctx);
+  for (let i = 0; i < 500; i++) F('cfgBizStart_')();
+  ok(reads === 1, '500回呼んでもシートを読むのは1回だけ（実際 ' + reads + '回）');
+  ok(F('cfgBizStart_')() === 16, '値も正しい');
+  ok(F('timeRank_')('23:30') === 23.5, 'timeRank_ も動く');
+  ok(F('timeRank_')('01:00') === 25, '16時起点なので 01:00 は 25');
+  vm.runInContext('_cfgCache = null; _cfgVal = {}', ctx);
+  ok(F('cfgBizStart_')() === 16, '読み直しても同じ');
+  ctx.SpreadsheetApp = realSA;
+  resetSheets();
+  vm.runInContext('_cfgCache = null; _cfgVal = {}', ctx);
+}
+
+console.log('\n■ 「いつ動いたか」の表示');
+{
+  const A = F('agoText_');
+  ok(A('') === 'まだありません', '記録が無ければそう言う');
+  ok(A('こわれた値') === 'まだありません', '読めない値でも落ちない');
+  has(A(new CtxDate(Date.now() - 30 * 60000).toISOString()), '30分前', '30分前');
+  has(A(new CtxDate(Date.now() - 3 * 3600000).toISOString()), '3時間前', '3時間前');
+  has(A(new CtxDate(Date.now() - 2 * 86400000).toISOString()), '2日前', '2日前');
 }
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');

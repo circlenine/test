@@ -1,12 +1,23 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C009ver  （2026/09/04）  ★★★   ← もとは version 232
+ *  ★★★  C010ver  （2026/09/05）  ★★★   ← もとは version 232
  *
  *  ファイル記号: C=Code.gs / L=LineReport.gs / E=Extras.gs
  *  ※ Apps Script 上のファイル名も「Code」に統一してください（旧: コード）
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C010ver]
+ *   ・スクショの営業曜日を、数字を打つだけで直せるようにした
+ *     ① スクショにリプライして「0904」だけ打つ → そのスクショの日付になる
+ *     ② スクショの前か後に「↑0904」「↓0904」だけ打つ → 矢印の向いた側のスクショ
+ *        上・左向き＝先に送ったスクショ／下・右向き＝次に送るスクショ
+ *     ・2〜4桁は日付だけ（年は送った日と同じ）、5〜8桁は年＋日付
+ *     ・何も打たなければ、今までどおり送った日の営業曜日
+ *   ・スクショに写っている投稿者の名前も読み取るようにした
+ *     身内の名前で、中身も手持ちの記録とそっくりなら二重登録とみなして外す
+ *     名前だけ身内、または中身だけそっくりなら ⚠️ を付けて取り込む（要確認）
  *
  *  [C009ver]
  *   ・取込の時間帯を 17:00〜翌05:15（29:15）に戻した（C008の18:00〜05:30は誤り）
@@ -280,7 +291,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C009ver";
+const CODE_VERSION = "C010ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -855,6 +866,12 @@ function handleEvent_(ev) {
 
   if (ev.message.type !== "text") return;
 
+  // --- 「0904」「↑0904」だけの1行 ＝ スクショの日付メモ ---
+  // オプチャは過去の投稿を探してから送るので、送った日と乗った日がずれる。
+  // これは画像と同じく誰が打ってもよい（画像を送れるのが全員なので）。
+  const note = parseDateNote_(ev.message.text, sentAt);
+  if (note) { handleDateNote_(ev, note); return; }
+
   // --- テキスト ＝ 自分の乗車記録 ---
   // こちらは登録済みの5人だけ。誰の実績かを個人タブに記録するため。
   const userId = (ev.source && ev.source.userId) || "";
@@ -898,6 +915,19 @@ function handleOpuchaImage_(ev, sentAt) {
               : (set ? 1 : opuchaBurstSeq_(ev));
 
   const who = opuchaSenderName_(ev);   // アイコン名（表示名）
+  const uid = (ev.source && ev.source.userId) || "anon";
+
+  // 「↓0904」のように、先に日付を打ってからスクショを送った場合はそれを使う
+  const pend = cache.get("PENDDATE_" + uid);
+  let bizD = businessDate_(sentAt);
+  let dateFromNote = false;
+  if (pend) {
+    const pd = ymdToDate_(pend);
+    if (pd) { bizD = pd; dateFromNote = true; }
+    cache.remove("PENDDATE_" + uid);
+  }
+  // 「↑0904」のように、後から日付を打てるように、最後のスクショを覚えておく
+  if (mid) cache.put("LASTIMG_" + uid, mid, 3600);
 
   // read は「そのスクショから読み取れた乗車記録の件数」。
   // 1枚に2件以上写っていることがあるので、何件中の何件が不備かを返信に書くために持つ。
@@ -908,8 +938,9 @@ function handleOpuchaImage_(ev, sentAt) {
     if (!list.length) {
       r.ng.push("乗車記録が写っていません（時刻・金額・乗り場のどれも読み取れませんでした）");
     } else {
-      const res = writeOpuchaRecords_(list, mid, businessDate_(sentAt));
+      const res = writeOpuchaRecords_(list, mid, bizD);
       r.ok = res.wrote;
+      r.suspect = res.suspect || 0;
       r.ng = r.ng.concat(res.skipped);
     }
   } catch (e) {
@@ -917,7 +948,198 @@ function handleOpuchaImage_(ev, sentAt) {
     r.ng.push(e.message || "スクショを読み取れませんでした");
   }
 
+  if (dateFromNote && r.ok) r.note = "営業曜日は " + fmtDateW_(bizD) + " で登録しました";
   opuchaReplyBurst_(reply, who, r, set, total);
+}
+
+
+/* ============ 3-3. スクショの日付メモ（「0904」「↑0904」）============ */
+
+/** 2026/09/04 → "9/4(金)" */
+function fmtDateW_(d) {
+  const w = ["日", "月", "火", "水", "木", "金", "土"];
+  return (d.getMonth() + 1) + "/" + d.getDate() + "(" + w[d.getDay()] + ")";
+}
+
+/** "2026-09-04" → Date（営業曜日として使うので昼12時にそろえる） */
+function ymdToDate_(ymd) {
+  const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], 12, 0, 0);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** Date → "2026-09-04" */
+function dateToYmd_(d) {
+  return d.getFullYear() + "-" + pad2_(d.getMonth() + 1) + "-" + pad2_(d.getDate());
+}
+
+// 矢印。向いた先のスクショが対象になる。
+// 上・左 ＝ もう送ったスクショ（画面の上にある）／下・右 ＝ これから送るスクショ
+const ARROW_PREV = /[\u2191\u2196\u2197\u21D1\u2B06\u25B2\u25B3\u{1F53C}\u{1F446}\u2934\u2190\u2196\u21D0\u2B05\u25C0\u25C1\u{1F448}]/u;
+const ARROW_NEXT = /[\u2193\u2198\u2199\u21D3\u2B07\u25BC\u25BD\u{1F53D}\u{1F447}\u2935\u2192\u21D2\u27A1\u25B6\u25B7\u{1F449}]/u;
+const ARROW_ANY  = /[\u2190-\u21FF\u2B05-\u2B07\u25B2-\u25C1\u2934\u2935\u27A1\u{1F53C}\u{1F53D}\u{1F446}-\u{1F449}]/u;
+
+/**
+ * 「0904」だけ、または「↑0904」だけの1行かどうかを見る。
+ * 当てはまれば { bizDate: Date, dir: "prev"|"next"|"" } を返す。違えば null。
+ *
+ * 桁の読み方（ご指定どおり）:
+ *   2〜4桁 … 日付だけ。年は送った日と同じ
+ *            4桁=MMDD / 3桁=MDD / 2桁=その月の日
+ *   5〜8桁 … 年＋日付。8桁=YYYYMMDD / 7桁=YYYMMDD / 6桁=YYMMDD / 5桁=YMMDD
+ *            年は下けたが合う年のうち、今年にいちばん近いものを選ぶ
+ *            （2028 も 28 も 8 も、同じ2028年になる）
+ */
+function parseDateNote_(text, sentAt) {
+  let t = String(text == null ? "" : text).trim();
+  if (!t || t.indexOf("\n") !== -1 || t.indexOf("\r") !== -1) return null;  // 1行だけが条件
+
+  // 矢印を取り除きつつ、向きを覚える
+  let dir = "";
+  if (ARROW_ANY.test(t)) {
+    dir = ARROW_PREV.test(t) ? "prev" : (ARROW_NEXT.test(t) ? "next" : "prev");
+    t = t.replace(new RegExp(ARROW_ANY.source, "gu"), "");
+    t = t.replace(/[\uFE0F\u200D]/g, "");     // 絵文字の飾り（異体字セレクタ等）
+  }
+
+  // 数字だけ（区切りは / - . 年月日 を許す）になっていなければメモではない
+  t = t.replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); })
+       .replace(/年|月/g, "/").replace(/日$/, "").trim();
+
+  const now = sentAt || new Date();
+  let y, mo, da;
+  let explicitYear = false;      // 年を自分で書いたか（書いたならその年を尊重する）
+
+  if (/^[0-9]{2,8}$/.test(t)) {
+    if (t.length <= 4) {
+      // 2〜4桁 ＝ 日付だけ。年は送った日と同じ
+      y = now.getFullYear();
+      if (t.length === 2)      { mo = now.getMonth() + 1; da = +t; }
+      else if (t.length === 3) { mo = +t.slice(0, 1);     da = +t.slice(1); }
+      else                     { mo = +t.slice(0, 2);     da = +t.slice(2); }
+    } else {
+      // 5〜8桁 ＝ 年＋日付。8桁=YYYYMMDD / 7桁=YYYMMDD / 6桁=YYMMDD / 5桁=YMMDD
+      y  = resolveYear_(t.slice(0, t.length - 4), now.getFullYear());
+      mo = +t.slice(-4, -2);
+      da = +t.slice(-2);
+      explicitYear = true;
+    }
+  } else if (/^[0-9]{1,4}\/[0-9]{1,2}(\/[0-9]{1,2})?$/.test(t)) {
+    const q = t.split("/");
+    if (q.length === 3) { y = resolveYear_(q[0], now.getFullYear()); mo = +q[1]; da = +q[2];
+                          explicitYear = true; }
+    else                { y = now.getFullYear(); mo = +q[0]; da = +q[1]; }
+  } else {
+    return null;                 // 数字と区切り以外が混ざっている＝ただの文章
+  }
+
+  if (!(mo >= 1 && mo <= 12) || !(da >= 1 && da <= 31)) return null;
+  const d = new Date(y, mo - 1, da, 12, 0, 0);
+  if (d.getMonth() !== mo - 1 || d.getDate() !== da) return null;   // 2/31 のような日は無し
+
+  // 年を書かなかったのに先の日付になったら1年戻す。オプチャは過去の投稿なので、
+  // 9月に「1231」と打ったら今年の年末ではなく、去年の年末のはず。
+  if (!explicitYear && d.getTime() - now.getTime() > 7 * 24 * 3600 * 1000) {
+    d.setFullYear(d.getFullYear() - 1);
+  }
+
+  return { bizDate: d, dir: dir };
+}
+
+/** 年の下けた（"8" "28" "028" "2028"）から、今年にいちばん近い年を決める */
+function resolveYear_(ys, thisYear) {
+  const n = String(ys).replace(/[^0-9]/g, "");
+  if (n.length >= 4) return +n;
+  const mod = Math.pow(10, n.length);
+  const want = +n % mod;
+  let best = null;
+  for (let y = thisYear - 20; y <= thisYear + 20; y++) {
+    if (y % mod !== want) continue;
+    const dNew = Math.abs(y - thisYear), dOld = best === null ? 999 : Math.abs(best - thisYear);
+    // 同じ近さなら過去のほうを選ぶ（オプチャは過去の投稿なので）
+    if (dNew < dOld || (dNew === dOld && y < best)) best = y;
+  }
+  return best === null ? thisYear : best;
+}
+
+/**
+ * 日付メモを受けて、対象のスクショの営業曜日を直す。
+ *  ・スクショにリプライして打った → そのスクショ（quotedMessageId で分かる）
+ *  ・矢印が「前」を向いている     → 直前に自分が送ったスクショ
+ *  ・矢印が「後」を向いている     → まだ来ていないので、次のスクショまで取っておく
+ */
+function handleDateNote_(ev, note) {
+  const reply = ev.replyToken || "";
+  const uid   = (ev.source && ev.source.userId) || "anon";
+  const cache = CacheService.getScriptCache();
+  const quoted = (ev.message && ev.message.quotedMessageId) || "";
+  const label  = fmtDateW_(note.bizDate);
+
+  // 「↓0904」＝これから送るスクショの日付。取っておいて、次の画像で使う
+  if (!quoted && note.dir === "next") {
+    cache.put("PENDDATE_" + uid, dateToYmd_(note.bizDate), 3600);
+    lineReply_(reply, "\U0001F4C5 次に送るスクショを " + label + " として取り込みます");
+    return;
+  }
+
+  const mid = quoted || cache.get("LASTIMG_" + uid) || "";
+  if (!mid) {
+    // まだスクショが来ていない。前向きの矢印でも、次のスクショに使えるようにしておく
+    cache.put("PENDDATE_" + uid, dateToYmd_(note.bizDate), 3600);
+    lineReply_(reply, "\U0001F4C5 直前のスクショが見つからなかったので、" +
+                      "次に送るスクショを " + label + " として取り込みます");
+    return;
+  }
+
+  let n = 0;
+  try { n = fixOpuchaDate_(mid, note.bizDate); }
+  catch (e) { logErr_("fixOpuchaDate", e); lineReply_(reply, "\u274C 日付を直せませんでした\n" + e.message); return; }
+
+  if (!n) {
+    lineReply_(reply, "\U0001F4C5 直す行が見つかりませんでした。" +
+                      "取り込めていないスクショか、すでに消された行かもしれません。");
+    return;
+  }
+  lineReply_(reply, "\U0001F4C5 営業曜日を " + label + " に直しました（" + n + "件）");
+}
+
+/**
+ * そのスクショから入った行（J列に messageId が入っている）の営業曜日を書き換える。
+ * オプチャ行はエリアタブと関空・ﾊﾞﾗｼにしか入らないので、そこだけ見る。
+ */
+function fixOpuchaDate_(mid, bizDate) {
+  if (!mid) return 0;
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const touched = [];
+  let n = 0;
+
+  AREA_TABS.concat(FLAG_TABS).forEach(function (name) {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const last = sh.getLastRow();
+    if (last < START_ROW) return;
+    const rows = last - START_ROW + 1;
+    const links = sh.getRange(START_ROW, C_LINK, rows, 1).getValues();
+    const dates = sh.getRange(START_ROW, C_DATE, rows, 1).getValues();
+    let hit = false;
+    for (let i = 0; i < rows; i++) {
+      const v = String(links[i][0]).trim();
+      if (v !== mid && v.indexOf(mid + "-") !== 0) continue;
+      dates[i][0] = new Date(bizDate.getTime());
+      hit = true; n++;
+    }
+    if (!hit) return;
+    sh.getRange(START_ROW, C_DATE, rows, 1).setValues(dates);   // 1タブ1回だけ書く
+    touched.push(name);
+  });
+
+  // 日付が変われば並び順も変わるので、触ったタブだけ整形しなおす
+  touched.forEach(function (name) {
+    try { formatTab_(ss.getSheetByName(name)); } catch (e) { logErr_("format:" + name, e); }
+  });
+  if (touched.length) touchStamp_(ss, touched);
+  return n;
 }
 
 /**
@@ -1012,9 +1234,19 @@ function opuchaReplyText_(who, arr, total) {
   arr.forEach(function (x) { ok += x.ok; });
   const bad = arr.filter(function (x) { return x.ng && x.ng.length; });
 
+  const notes = [];
+  arr.forEach(function (x) {
+    if (x.note) notes.push(x.note);
+    if (x.suspect) notes.push("⚠️ 要確認が" + x.suspect + "件あります（K列を見てください）");
+  });
+
   if (!bad.length) {
-    if (total <= 1) return "";          // 1枚で全部通ったときは通知しない
-    return "📷 " + sama + "スクショ" + total + "枚を取り込みました（合計" + ok + "件）";
+    // 1枚で全部通ったときは黙る。ただし日付を直した／要確認が出たときは伝える
+    if (total <= 1 && !notes.length) return "";
+    const head = (total <= 1)
+      ? "📷 " + sama + ok + "件を取り込みました"
+      : "📷 " + sama + "スクショ" + total + "枚を取り込みました（合計" + ok + "件）";
+    return [head].concat(uniq_(notes)).join("\n");
   }
 
   const lines = [];
@@ -1036,6 +1268,7 @@ function opuchaReplyText_(who, arr, total) {
   });
 
   if (ok > 0) lines.push("※ ほか" + ok + "件は取り込みました。");
+  uniq_(notes).forEach(function (m) { lines.push(m); });
   lines.push("お手数ですが、時刻・金額・乗り場が写るように撮り直して送ってください。");
   return lines.join("\n");
 }
@@ -1080,7 +1313,8 @@ const OPUCHA_IMAGE_PROMPT =
   "写っているぶんは、上から順に1件ずつ、すべて配列に入れてください。\n" +
   "出力は JSON の配列だけ。前置きも説明も書かないでください。\n" +
   "各要素の形:\n" +
-  '{"time":"HH:MM","money":12300,"place":"乗り場","dest":"行先","wait":15,"note":"補足"}\n' +
+  '{"name":"投稿者名","time":"HH:MM","money":12300,"place":"乗り場","dest":"行先","wait":15,"note":"補足"}\n' +
+  "・name はその投稿の左上に出ている投稿者の表示名。読めなければ空文字\n" +
   "・time は乗車した時刻。26:15 や 29:15 のような24時超えの表記は 02:15 / 05:15 に直す\n" +
   "・money は金額の数値だけ（円・カンマは外す）\n" +
   "・place は乗せた場所、dest は降ろした場所。分からなければ空文字\n" +
@@ -1134,6 +1368,13 @@ function opuchaFromImage_(messageId) {
   return Array.isArray(arr) ? arr : [];
 }
 
+/** 同じ文言を何度も並べない */
+function uniq_(arr) {
+  const seen = {}, out = [];
+  (arr || []).forEach(function (v) { if (!seen[v]) { seen[v] = 1; out.push(v); } });
+  return out;
+}
+
 /** 不備を知らせるときの「どの行のことか」の目印を作る */
 function opuchaLabel_(x) {
   const t = String((x && x.time) || "").trim();
@@ -1161,6 +1402,8 @@ function writeOpuchaRecords_(list, messageId, bizDate) {
   const skipped = [];
   const bd = bizDate || businessDate_(new Date());
   const seen = opuchaExistingKeys_(ss);
+  const own  = ownRideIndex_(ss);      // 自分たちの記録（個人タブ）の一覧
+  let suspect = 0;
 
   list.forEach(function (x, i) {
     const tag = opuchaLabel_(x) + " → ";
@@ -1200,6 +1443,27 @@ function writeOpuchaRecords_(list, messageId, bizDate) {
     if (seen[dk]) { skipped.push(tag + "同じ内容がすでに登録されています"); return; }
     seen[dk] = true;
 
+    // --- 身内の投稿が写り込んでいないか見る ---
+    // スクショの中の名前が身内で、中身も手持ちの記録とそっくりなら、それは自分たちの
+    // 乗車がオプチャに流れてきただけ。オプチャとして足すと二重になるので外す。
+    const mineTab = memberFromScreenName_(x.name);
+    const nearTab = ownNearMatch_(own, bd, time, money);
+    if (mineTab && nearTab) {
+      skipped.push(tag + "「" + String(x.name).trim() + "」さんの投稿で、" +
+                   nearTab + "タブの記録と同じ内容です（二重登録のため除外）");
+      return;
+    }
+    let mark = "🆕";
+    let warn = "";
+    if (mineTab) {
+      mark = "⚠️";
+      warn = "要確認：身内（" + mineTab + "）の名前の投稿です";
+    } else if (nearTab) {
+      mark = "⚠️";
+      warn = "要確認：" + nearTab + "タブの記録と内容が近いです";
+    }
+    if (warn) suspect++;
+
     const w = parseInt(x.wait, 10);
     const rec = {
       bizDate: bd,
@@ -1208,9 +1472,9 @@ function writeOpuchaRecords_(list, messageId, bizDate) {
       startTime: "",
       place: tp.place,
       method: "",
-      other: [note, tp.toOther].filter(String).join(" "),
+      other: [note, tp.toOther, warn].filter(String).join(" "),
       sender: OPUCHA_TAB,                      // A列は「ｵﾌﾟﾁｬ」
-      mark: "🆕",
+      mark: mark,
       messageId: messageId ? (messageId + "-" + i) : ""
     };
 
@@ -1240,7 +1504,84 @@ function writeOpuchaRecords_(list, messageId, bizDate) {
     try { formatTab_(ss.getSheetByName(n)); } catch (e) { logErr_("format:" + n, e); }
   });
   if (touched.length) touchStamp_(ss, touched);
-  return { wrote: wrote, skipped: skipped };
+  return { wrote: wrote, skipped: skipped, suspect: suspect };
+}
+
+/**
+ * スクショに写っていた投稿者名が、身内の誰かかどうかを見る。
+ * 表示名の対応表（DISPLAY_NAME_MAP）を先に見て、だめならタブ名そのものと比べる。
+ */
+function memberFromScreenName_(name) {
+  const raw = String(name == null ? "" : name).trim();
+  if (!raw) return "";
+
+  const byMap = tabFromDisplayName_(raw);
+  if (byMap) return byMap;
+
+  // 「ﾀﾞｲｽｹ」「ダイスケ」のような、タブ名そのままの表示名も拾う
+  const norm = function (v) {
+    return toFullKana_(String(v)).replace(/[\s　さん様くん君ちゃん]/g, "").toUpperCase();
+  };
+  const n = norm(raw);
+  if (!n) return "";
+  let hit = "";
+  PERSONAL_TABS.forEach(function (t) {
+    const tn = norm(t);
+    if (!tn || hit) return;
+    if (n === tn || n.indexOf(tn) !== -1) hit = t;
+  });
+  return hit;
+}
+
+/**
+ * 個人タブの記録を「営業曜日＋金額」で引ける形にまとめる。
+ * 同じ乗車がオプチャにも流れてきたときに気づくために使う。
+ */
+function ownRideIndex_(ss) {
+  const idx = {};
+  PERSONAL_TABS.forEach(function (name) {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    const last = sh.getLastRow();
+    if (last < START_ROW) return;
+    sh.getRange(START_ROW, 1, last - START_ROW + 1, LAST_COL).getValues().forEach(function (r) {
+      const d = r[C_DATE - 1];
+      if (!(d instanceof Date)) return;
+      const money = parseInt(String(r[C_MONEY - 1]).replace(/[^0-9]/g, ""), 10);
+      if (isNaN(money)) return;
+      const min = hhmmToMin_(String(r[C_TIME - 1]));
+      if (min === null) return;
+      const k = dateToYmd_(d) + "|" + money;
+      (idx[k] = idx[k] || []).push({ tab: name, min: min });
+    });
+  });
+  return idx;
+}
+
+/** "23:15" → 1395。読めなければ null */
+function hhmmToMin_(s) {
+  const m = String(s).match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  return (+m[1]) * 60 + (+m[2]);
+}
+
+/**
+ * 「営業曜日・金額が同じで、乗車時刻も15分以内」の記録が個人タブにあるか。
+ * あればそのタブ名を返す。オプチャの投稿は時刻の書き方がばらつくので幅を持たせる。
+ */
+function ownNearMatch_(idx, bizDate, time, money) {
+  const list = idx[dateToYmd_(bizDate) + "|" + money];
+  if (!list || !list.length) return "";
+  const min = hhmmToMin_(time);
+  if (min === null) return "";
+  let hit = "";
+  list.forEach(function (o) {
+    if (hit) return;
+    let diff = Math.abs(o.min - min);
+    if (diff > 720) diff = 1440 - diff;      // 日をまたぐ 23:55 と 00:05 は10分差
+    if (diff <= 15) hit = o.tab;
+  });
+  return hit;
 }
 
 /**
@@ -1743,9 +2084,12 @@ function formatTab_(sheet) {
     if (mk !== "🆕" && mk !== "🔧") r[C_MARK - 1] = "";
 
     // G列を整える。G列に入ってはいけないものはI列へ回す
-    // 怪しい行に印を付ける（時刻が分からない／金額が0円か4万円以上）
+    // 怪しい行に印を付ける（時刻が分からない／金額が0円か4万円以上／I列に「要確認」）
+    // I列の「要確認」は、スクショ取込のときに身内の投稿らしいと見えたもの。
+    // 人が見て消すまで残しておきたいので、ここで付け直す。
     const moneyN = parseInt(String(r[C_MONEY - 1]).replace(/[^0-9]/g, ""), 10);
-    if (String(r[C_TIME - 1]).indexOf("?") !== -1 || isNaN(moneyN) ||
+    if (String(r[C_OTHER - 1]).indexOf("要確認") !== -1 ||
+        String(r[C_TIME - 1]).indexOf("?") !== -1 || isNaN(moneyN) ||
         moneyN === 0 || moneyN >= 40000) {
       // 🆕 / 🔧 が付いている行は、そちらを優先して残す（印は1つしか置けないため）
       if (String(r[C_MARK - 1]).trim() === "") r[C_MARK - 1] = "⚠️";

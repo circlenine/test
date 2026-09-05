@@ -13,31 +13,59 @@ const CtxDate = vm.runInContext('Date', ctx);
 /* ---- 偽のシート（書き込みを覚えておく） ---- */
 const written = {};      // タブ名 → 書かれた行の配列
 function makeSheet(name, rows) {
-  return {
+  const sh = {
     getName: () => name,
     getLastRow: () => 3 + rows.length,
     getMaxRows: () => 1000,
     insertRowsAfter: () => {},
-    getRange: () => chain(name, rows),
+    getRange: (r, c, nr, nc) => chain(name, rows, r, c, nr, nc),
     getRangeList: () => chain(name, rows),
     setRowHeights: () => {}, setRowHeightsForced: () => {},
     autoResizeColumns: () => {}, setColumnWidth: () => {},
     deleteRows: () => {}, insertRowsBefore: () => {}, sort: () => {},
     getFrozenRows: () => 3, setFrozenRows: () => {},
-    getDataRange: () => chain(name, rows)
+    getDataRange: () => chain(name, rows),
+    getMaxColumns: () => 11,
+    getParent: () => ({ getSheetByName: n => TABS[n] ? makeSheet(n, TABS[n]) : null, toast: () => {} })
   };
+  // 知らないメソッドは何もしない（本物のシートは山ほど持っているため）
+  return new Proxy(sh, { get: (t, k) => (k in t ? t[k] : () => undefined) });
 }
 // 呼ばれても困らないよう、何を呼んでも自分を返す偽の Range
-function chain(name, rows) {
-  const r = {
-    getValues: () => rows.map(x => x.slice()),
-    getValue: () => '',
-    getDisplayValues: () => rows.map(x => x.map(String)),
-    getNumRows: () => rows.length,
-    getLastRow: () => 3 + rows.length,
-    setValues: v => { written[name] = (written[name] || []).concat(v); }
+function chain(name, rows, r0, c0, nr, nc) {
+  // 行・列の指定があればそのぶんだけ切り出す（本物と同じ形にする）
+  const cut = () => (typeof r0 === 'number')
+    ? rows.slice(r0 - 4, r0 - 4 + (nr || 1)).map(x => x.slice(c0 - 1, c0 - 1 + (nc || 1)))
+    : rows.map(x => x.slice());
+  const put = v => {
+    if (typeof r0 !== 'number' || typeof c0 !== 'number') {
+      written[name] = (written[name] || []).concat(v);
+      return;
+    }
+    const base = r0 - 4;
+    // 最終行より下に書くのは「追加」。テストから見えるように別に控えておく
+    if (base >= rows.length) written[name] = (written[name] || []).concat(v);
+    v.forEach((vr, i) => {
+      while (rows.length <= base + i) rows.push(new Array(11).fill(''));
+      vr.forEach((vv, j) => { rows[base + i][c0 - 1 + j] = vv; });
+    });
   };
-  return new Proxy(r, { get: (t, k) => (k in t ? t[k] : () => r) });
+  const r = {
+    getValues: cut,
+    getValue: () => '',
+    getDisplayValues: () => cut().map(x => x.map(String)),
+    getNumRows: () => (nr || rows.length),
+    getLastRow: () => 3 + rows.length,
+    setValues: put
+  };
+  // 知らないメソッドを呼ばれても、つないで呼べるように自分（Proxy）を返す
+  const px = new Proxy(r, { get: (t, k) => (k in t ? t[k] : () => px) });
+  return px;
+}
+// 何を呼んでもつながる、組み立て役のダミー
+function builder() {
+  const b = new Proxy({ build: () => ({}) }, { get: (t, k) => (k in t ? t[k] : () => b) });
+  return b;
 }
 let TABS = {};
 function resetSheets(preset) {
@@ -54,6 +82,9 @@ ctx.SpreadsheetApp = {
     toast: () => {}
   }),
   BorderStyle: { SOLID: 'SOLID' },
+  newTextStyle: () => builder(),
+  newRichTextValue: () => builder(),
+  newDataValidation: () => builder(),
   WrapStrategy: { CLIP: 'CLIP', WRAP: 'WRAP' },
   getUi: () => ({ createMenu: () => ({ addItem() { return this; }, addSeparator() { return this; },
                                        addSubMenu() { return this; }, addToUi() {} }) })
@@ -245,6 +276,174 @@ t = F('opuchaReplyText_')('ダイスケ', [{ idx: 2, ok: 0, ng: ['乗り場が�
 has(t, '【2枚目】', '2枚目だと分かる');
 t = F('opuchaReplyText_')('ダイスケ', [{ idx: 1, ok: 0, ng: ['乗り場が読み取れません'] }], 1);
 has(t, '【このスクショ】', '1枚目なら「このスクショ」のまま');
+
+
+/* ============ C010ver：日付メモ と 身内の投稿の見分け ============ */
+
+const SENT = new CtxDate(2026, 8, 5, 20, 0, 0);   // 2026/09/05(土) 20:00 に送った
+const P = (t) => F('parseDateNote_')(t, SENT);
+const ymd = o => o && (o.bizDate.getFullYear() + '-' +
+  ('0' + (o.bizDate.getMonth() + 1)).slice(-2) + '-' + ('0' + o.bizDate.getDate()).slice(-2));
+
+console.log('\n■ 2〜4桁は「日付だけ」。年は送った日と同じ');
+ok(ymd(P('0904')) === '2026-09-04', '0904 → 2026-09-04');
+ok(ymd(P('904'))  === '2026-09-04', '904（3桁）→ 2026-09-04');
+ok(ymd(P('1231')) === '2025-12-31', '9月に1231と打ったら去年の12/31（未来にはしない）');
+ok(ymd(P('04'))   === '2026-09-04', '04（2桁）→ 送った月の4日');
+ok(ymd(P('０９０４')) === '2026-09-04', '全角でも読める');
+
+console.log('\n■ 5〜8桁は「年＋日付」。2028も28も8も同じ年になる');
+ok(ymd(P('20280904')) === '2028-09-04', '20280904（8桁）');
+ok(ymd(P('280904'))   === '2028-09-04', '280904（6桁）');
+ok(ymd(P('80904'))    === '2028-09-04', '80904（5桁）');
+ok(ymd(P('0280904'))  === '2028-09-04', '0280904（7桁）');
+
+console.log('\n■ 矢印の向いたほうのスクショが対象');
+ok(P('↑0904').dir === 'prev', '↑ は前（もう送ったスクショ）');
+ok(P('⬆️0904').dir === 'prev', '⬆️ 絵文字でも前');
+ok(P('👆0904').dir === 'prev', '👆 でも前');
+ok(P('←0904').dir === 'prev', '← も前');
+ok(P('↓0904').dir === 'next', '↓ は後（これから送るスクショ）');
+ok(P('⬇️0904').dir === 'next', '⬇️ 絵文字でも後');
+ok(P('→0904').dir === 'next', '→ も後');
+ok(P('0904 ↑').dir === 'prev', '矢印が後ろにあってもよい');
+ok(P('0904').dir === '', '矢印なしなら向きなし');
+ok(ymd(P('↑0904')) === '2026-09-04', '矢印を外した数字がちゃんと読める');
+
+console.log('\n■ 日付メモとして扱わないもの');
+ok(P('') === null, '空');
+ok(P('おつかれさまです') === null, 'ただの雑談');
+ok(P('0904 新地4') === null, '数字のあとに文字が付いていたら対象外');
+ok(P('0904\n0905') === null, '2行あったら対象外');
+ok(P('12000') === null, '5桁でも 1年20月00日 は日付にならない');
+ok(P('0231') === null, '2月31日は無い');
+ok(P('1') === null, '1桁は短すぎる');
+ok(ymd(P('9/4')) === '2026-09-04', '9/4 のような書き方も読める');
+ok(ymd(P('2028/9/4')) === '2028-09-04', '2028/9/4 も読める');
+ok(ymd(P('9月4日')) === '2026-09-04', '9月4日 も読める');
+
+console.log('\n■ 先の日付になったら1年戻す（オプチャは過去の投稿なので）');
+ok(ymd(F('parseDateNote_')('1231', new CtxDate(2026, 0, 5, 20, 0, 0))) === '2025-12-31',
+   '1/5 に 1231 と打ったら前の年の12/31');
+
+console.log('\n■ 身内の名前を見分ける');
+ok(F('memberFromScreenName_')('齊藤大介') === 'ﾀﾞｲｽｹ', '対応表の名前');
+ok(F('memberFromScreenName_')('齊藤大介さん') === 'ﾀﾞｲｽｹ', '「さん」付きでも');
+ok(F('memberFromScreenName_')('山脇海斗(放出営業所)') === 'ｶｲﾄ', 'カッコ書きを外す');
+ok(F('memberFromScreenName_')('ﾀﾞｲｽｹ') === 'ﾀﾞｲｽｹ', 'タブ名そのまま');
+ok(F('memberFromScreenName_')('ダイスケ') === 'ﾀﾞｲｽｹ', '全角カナでも');
+ok(F('memberFromScreenName_')('知らない人') === '', '身内でなければ空');
+ok(F('memberFromScreenName_')('') === '', '空でも落ちない');
+
+console.log('\n■ 身内の名前 ＋ 手持ちの記録とそっくり → 二重登録として外す');
+function ownRow(tab, y, m, d, time, money, place) {
+  const r = new Array(11).fill('');
+  r[K('C_SENDER') - 1] = tab;
+  r[K('C_DATE') - 1] = new CtxDate(y, m - 1, d, 12, 0, 0);
+  r[K('C_TIME') - 1] = time;
+  r[K('C_MONEY') - 1] = money;
+  r[K('C_PLACE') - 1] = place;
+  return r;
+}
+resetSheets({ 'ﾀﾞｲｽｹ': [ownRow('ﾀﾞｲｽｹ', 2026, 9, 3, '23:10', 12000, '新地4')] });
+r = F('writeOpuchaRecords_')([{ name: '齊藤大介', time: '23:10', money: 12000, place: '新地4' }],
+                             'MID5', new CtxDate(2026, 8, 3));
+ok(r.wrote === 0, '取り込まない');
+has(r.skipped[0], '二重登録のため除外', '理由が「二重登録」になっている');
+has(r.skipped[0], 'ﾀﾞｲｽｹタブ', 'どのタブの記録と同じかを書く');
+
+console.log('\n■ 時刻が15分ずれていても「そっくり」と見る');
+resetSheets({ 'ﾀﾞｲｽｹ': [ownRow('ﾀﾞｲｽｹ', 2026, 9, 3, '23:10', 12000, '新地4')] });
+r = F('writeOpuchaRecords_')([{ name: '齊藤大介', time: '23:24', money: 12000, place: '新地4' }],
+                             'MID6', new CtxDate(2026, 8, 3));
+ok(r.wrote === 0, '14分差なら同じ乗車とみなす');
+resetSheets({ 'ﾀﾞｲｽｹ': [ownRow('ﾀﾞｲｽｹ', 2026, 9, 3, '23:10', 12000, '新地4')] });
+r = F('writeOpuchaRecords_')([{ name: '齊藤大介', time: '23:40', money: 12000, place: '新地4' }],
+                             'MID7', new CtxDate(2026, 8, 3));
+ok(r.wrote === 1, '30分差なら別の乗車として取り込む');
+ok(r.suspect === 1, 'ただし要確認にする');
+
+console.log('\n■ 名前だけ身内／中身だけそっくり → 取り込むが ⚠️ を付ける');
+resetSheets();
+r = F('writeOpuchaRecords_')([{ name: '齊藤大介', time: '23:10', money: 12000, place: '新地4' }],
+                             'MID8', new CtxDate(2026, 8, 3));
+ok(r.wrote === 1 && r.suspect === 1, '名前だけ身内 → 取り込んで要確認');
+ok((written['北4'] || [])[0][K('C_MARK') - 1] === '⚠️', 'K列が ⚠️ になる');
+has((written['北4'] || [])[0][K('C_OTHER') - 1], '要確認：身内', 'I列に理由が残る');
+
+resetSheets({ 'ﾀﾞｲｽｹ': [ownRow('ﾀﾞｲｽｹ', 2026, 9, 3, '23:10', 12000, '新地4')] });
+r = F('writeOpuchaRecords_')([{ name: '知らない人', time: '23:10', money: 12000, place: '新地4' }],
+                             'MID9', new CtxDate(2026, 8, 3));
+ok(r.wrote === 1 && r.suspect === 1, '中身だけそっくり → 取り込んで要確認');
+has((written['北4'] || [])[0][K('C_OTHER') - 1], '内容が近いです', 'I列に理由が残る');
+
+resetSheets();
+r = F('writeOpuchaRecords_')([{ name: '知らない人', time: '23:10', money: 12000, place: '新地4' }],
+                             'MIDA', new CtxDate(2026, 8, 3));
+ok(r.wrote === 1 && r.suspect === 0, 'どちらでもなければ普通に取り込む');
+ok((written['北4'] || [])[0][K('C_MARK') - 1] === '🆕', 'K列は 🆕 のまま');
+
+console.log('\n■ 要確認があると返信で知らせる');
+t = F('opuchaReplyText_')('ダイスケ', [{ idx: 1, read: 1, ok: 1, suspect: 1, ng: [] }], 1);
+has(t, '要確認が1件', '全部通っていても要確認は伝える');
+t = F('opuchaReplyText_')('ダイスケ', [{ idx: 1, read: 1, ok: 1, ng: [], note: '営業曜日は 9/4(金) で登録しました' }], 1);
+has(t, '9/4(金)', '日付を直したことも伝える');
+
+console.log('\n■ 日付メモを受けたときの動き');
+Object.keys(cacheStore).forEach(k => delete cacheStore[k]);
+sent.length = 0;
+const evNote = (text, quoted) => ({
+  replyToken: 'rt', source: { type: 'group', groupId: 'G1', userId: 'U9' },
+  message: { type: 'text', text: text, quotedMessageId: quoted || undefined }
+});
+// ① まだスクショが無い状態で「↓0904」→ 次のスクショ用に取っておく
+F('handleDateNote_')(evNote('↓0904'), P('↓0904'));
+ok(cacheStore['PENDDATE_U9'] === '2026-09-04', '次のスクショ用に日付を取っておく');
+has(sent[0], '次に送るスクショ', 'その旨を返信する');
+// ② スクショが無いのに「↑0904」→ これも次のスクショ用に回す
+Object.keys(cacheStore).forEach(k => delete cacheStore[k]);
+sent.length = 0;
+F('handleDateNote_')(evNote('↑0904'), P('↑0904'));
+ok(cacheStore['PENDDATE_U9'] === '2026-09-04', '直前のスクショが無ければ次に回す');
+has(sent[0], '見つからなかった', 'その旨を返信する');
+
+console.log('\n■ 取り込んだ行の日付を後から直す');
+resetSheets();
+const linked = new Array(11).fill('');
+linked[K('C_DATE') - 1] = new CtxDate(2026, 8, 5, 12, 0, 0);
+linked[K('C_TIME') - 1] = '23:10';
+linked[K('C_MONEY') - 1] = 12000;
+linked[K('C_LINK') - 1] = 'IMG123-0';
+const linked2 = linked.slice(); linked2[K('C_LINK') - 1] = 'IMG123-1';
+const other   = linked.slice(); other[K('C_LINK') - 1] = 'ZZZ-0';
+resetSheets({ '北4': [linked, linked2, other] });
+ok(F('fixOpuchaDate_')('IMG123', new CtxDate(2026, 8, 3, 12, 0, 0)) === 2,
+   'そのスクショから入った2行だけ直す');
+ok(F('fixOpuchaDate_')('NOPE', new CtxDate(2026, 8, 3, 12, 0, 0)) === 0,
+   '知らないIDなら0件');
+ok(F('fixOpuchaDate_')('', new CtxDate(2026, 8, 3, 12, 0, 0)) === 0,
+   '空のIDでも落ちない');
+
+console.log('\n■ ⚠️ が整形で消えないこと');
+{
+  const rr = new Array(11).fill('');
+  rr[K('C_DATE') - 1] = new CtxDate(2026, 8, 3, 12, 0, 0);
+  rr[K('C_TIME') - 1] = '23:10';
+  rr[K('C_MONEY') - 1] = 12000;
+  rr[K('C_PLACE') - 1] = '新地4';
+  rr[K('C_OTHER') - 1] = '要確認：身内（ﾀﾞｲｽｹ）の名前の投稿です';
+  rr[K('C_MARK') - 1] = '⚠️';
+  resetSheets({ '北4': [rr] });
+  vm.runInContext('_formatStats = {}', ctx);
+  try { F('formatTab_')(makeSheet('北4', TABS['北4'])); }
+  catch (e) { console.log('       formatTab_ が動きませんでした: ' + e.message); }
+  // 整形すると年見出しの行が入るので、データの行を探して見る
+  const hit = (TABS['北4'] || []).concat(written['北4'] || [])
+    .filter(x => String(x[K('C_OTHER') - 1]).indexOf('要確認') !== -1);
+  ok(hit.length === 1, '要確認の行がひとつ残っている');
+  ok(hit.length === 1 && String(hit[0][K('C_MARK') - 1]).trim() === '⚠️',
+     '整形しても I列に「要確認」がある行の ⚠️ は残る');
+}
 
 console.log(ng ? '\n✗ ' + ng + '件 失敗\n' : '\n✓ すべて通りました\n');
 process.exit(ng ? 1 : 0);

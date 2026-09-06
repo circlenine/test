@@ -559,8 +559,32 @@ function wbCollect_(all) {
     members: PERSONAL_TABS.slice(),
     periods: wbPeriods_(minD, maxD),
     own: own,
-    opu: opu
+    opu: opu,
+    map: wbMapUrls_(own, opu)
   };
+}
+
+/**
+ * 乗り場名 → Googleマップ のURL。
+ *
+ * 1件ずつURLを持たせると、同じ乗り場を何百回も書くことになってページが重くなる。
+ * 出てくる乗り場の種類だけ（せいぜい数十）を表にして渡し、
+ * 画面側で名前から引く。
+ * 002-Extras.gs（MapLink）が入っていないときは空の表を返す。画面側は
+ * 表に無い乗り場をただの文字として出すので、それでも何も壊れない。
+ */
+function wbMapUrls_(own, opu) {
+  const out = {};
+  if (typeof mapUrlFor_ !== "function") return out;
+  const add = function (list) {
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i].p;
+      if (!p || out[p] !== undefined) continue;
+      try { out[p] = mapUrlFor_(p) || ""; } catch (e) { out[p] = ""; }
+    }
+  };
+  add(own); add(opu);
+  return out;
 }
 
 function wbYmd_(d) {

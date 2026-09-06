@@ -260,6 +260,57 @@ has(p2.els['view'].innerHTML, '記録がありません', '空のときの案内
 p2.ctx.go('b'); has(p2.els['view'].innerHTML, '記録がありません', '記録タブも落ちない');
 p2.ctx.go('c'); has(p2.els['view'].innerHTML, '記録がありません', 'ランキングも落ちない');
 
+console.log('\n■ 乗り場をタップすると Googleマップが開く');
+{
+  const rides = [];
+  for (let i = 0; i < 4; i++) {
+    rides.push({ w:'ﾀﾞｲｽｹ', d:'2026-09-04', t:'23:1' + i, m:12000, p:'新地4',
+                 o:'', k:'', wt:null, y:'平日', s:23 });
+  }
+  const base = { ok:true, updated:'', all:false, days:60, shortMax:4999, longMin:10000,
+                 members:['ﾀﾞｲｽｹ'],
+                 periods:[{ label:'今期', from:'2026-08-16', to:'2026-09-30' }],
+                 own: rides, opu: [] };
+
+  const url = 'https://www.google.com/maps/search/?api=1&query=34.7,135.5';
+  const withMap = K('WB_HTML').replace('/*__DATA__*/null',
+    JSON.stringify(Object.assign({}, base, { map: { '新地4': url } })));
+  const pm = runPage(withMap);
+
+  pm.ctx.go('b');                       // ② 記録
+  has(pm.els['view'].innerHTML, 'href="' + url.replace(/&/g, '&amp;') + '"',
+    '記録カードの乗り場がリンクになる');
+  has(pm.els['view'].innerHTML, 'class="mapl"', 'リンクだと分かる印が付く');
+  has(pm.els['view'].innerHTML, '📍', '目印の📍が出る');
+  has(pm.els['view'].innerHTML, 'target="_blank"', '別のタブで開く（ページに戻ってこられる）');
+
+  pm.ctx.go('a');                       // ① 立ち回り（乗り場ランキング）
+  has(pm.els['view'].innerHTML, 'class="mapl nm"', 'ランキングの乗り場名もリンクになる');
+
+  // 行き先が分からないときは、ただの文字のまま
+  const noMap = K('WB_HTML').replace('/*__DATA__*/null', JSON.stringify(base));
+  const pn = runPage(noMap);
+  pn.ctx.go('b');
+  has(pn.els['view'].innerHTML, '新地4', '表に無ければ、そのまま文字で出る');
+  ok(pn.els['view'].innerHTML.indexOf('class="mapl"') === -1,
+    'リンクにはしない（押せない場所を作らない）');
+  ok(pn.els['view'].innerHTML.indexOf('undefined') === -1, 'undefined が出ない');
+}
+
+console.log('\n■ 乗り場の表は、種類のぶんだけ渡す');
+{
+  const mk = p => ({ p: p });
+  vm.runInContext('function mapUrlFor_(p){ return p ? "URL:" + p : ""; }', ctx);
+  const m = F('wbMapUrls_')([mk('新地4'), mk('新地4'), mk('天満')], [mk('天満'), mk('')]);
+  ok(Object.keys(m).length === 2, '同じ乗り場は1つにまとめる（' +
+     Object.keys(m).length + '種類）');
+  ok(m['新地4'] === 'URL:新地4', '行き先が入っている');
+  ok(m[''] === undefined, '空欄は入れない');
+  vm.runInContext('mapUrlFor_ = undefined;', ctx);
+  ok(Object.keys(F('wbMapUrls_')([mk('天満')], [])).length === 0,
+     '002-Extras.gs が入っていなければ空（画面はただの文字で出す）');
+}
+
 console.log('\n■ 読み込みに失敗したときの表示');
 {
   const html = K('WB_HTML').replace('/*__DATA__*/null',

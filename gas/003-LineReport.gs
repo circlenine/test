@@ -2,11 +2,22 @@
  * ================================================================
  *  LINE画像（Flex Message）＋ まとめスプシ レポート作成
  *
- *  ★★★  L005ver  （2026/09/06）  ★★★
+ *  ★★★  L006ver  （2026/09/06）  ★★★
  *
  *  ファイル記号: C=001-Code.gs / L=003-LineReport.gs / E=002-Extras.gs
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [L006ver]
+ *   ・そうさボタン [7]「レポートをLINEに送る」を足した（スマホから期間を決めて送れる）
+ *     ・「説明」タブの ▼レポートの期間 ／ ▼レポートの送り先 を読む
+ *     ・期間はプルダウンから選べる。無い期間は 260716-0815 のように打ち込む
+ *     ・末尾に t を付けると自分だけ、h を付けるとグループ（例 260716-0815t）
+ *     ・グループ（本番）は1回目では送らず、3分以内にもう一度チェックで確定
+ *     ・本番で送ったあとは、送り先らんを自動で「自分だけ」に戻す
+ *   ・メニューのレポート送信も、宛先の決め方を上とそろえた
+ *     （テストの宛先を、設定タブ「テスト送信先（自分のLINE）」から読む）
+ *   ・メニューに「🗺 乗り場にマップリンクを貼る／行き先を確認する」を足した
  *
  *  [L005ver]
  *   ・ファイル名を 003-LineReport.gs にした（中身の動きは変えていない）
@@ -37,7 +48,7 @@
  */
 
 /** このファイルのバージョン */
-const LR_VERSION = "L005ver";
+const LR_VERSION = "L006ver";
 
 
 /* ============ 鍵（コードに書かない） ============ */
@@ -159,6 +170,10 @@ function onOpenReport() {
   if (typeof menuStrategy === "function") m.addItem("🎯 立ち回り分析", "menuStrategy");
   if (typeof menuOpucha === "function")   m.addItem("🏷 オプチャ印を付ける／外す", "menuOpucha");
   if (typeof menuChartFit === "function") m.addItem("📐 グラフの大きさを揃える", "menuChartFit");
+  if (typeof menuMapLinksApply === "function") {
+    m.addItem("🗺 乗り場にマップリンクを貼る", "menuMapLinksApply");
+    m.addItem("🗺 マップの行き先を確認する", "menuMapLinksCheck");
+  }
   m.addSeparator();
   m.addItem("👥 グループIDを設定", "menuSetGroupId");
   m.addItem("🤖 Geminiキーを設定", "menuSetGeminiKey");
@@ -388,13 +403,262 @@ function executeManualReportFromUI(val, isTest) {
     const parts = val.split('-'); const sParts = parts[0].split('/'); const eParts = parts[1].split('/');
     let startD = new Date(parseInt(sParts[0], 10), parseInt(sParts[1], 10) - 1, parseInt(sParts[2], 10), 0, 0, 0);
     let endD = new Date(parseInt(eParts[0], 10), parseInt(eParts[1], 10) - 1, parseInt(eParts[2], 10), 23, 59, 59);
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    let targetId = isTest ? "Uec8443d00bcec9f0463fd47775a41909" : (ss.getSheetByName("説明") ? ss.getSheetByName("説明").getRange("Z1").getValue() : "");
+    let targetId = isTest ? rpTestTarget_() : rpGroupTarget_();
+    if (!targetId) return { status: "error", message: isTest
+      ? "自分の送り先が未設定です（設定タブ「テスト送信先（自分のLINE）」）"
+      : "グループの送り先が未設定です（メニュー「👥 グループIDを設定」）" };
     sendCustomReport(targetId, startD, endD);
     return { status: "success" };
   } catch (error) {
     return { status: "error", message: error.message };
   }
+}
+
+/* ============ 📱 そうさボタンから、期間を決めてレポートを送る ============ */
+/*
+ * スマホのスプレッドシートアプリからは、メニューもダイアログも出せない。
+ * そこで「説明」タブに置いた
+ *
+ *   ▼ レポートの期間   [ 今期（8/16〜9/6） ]  ← プルダウン。打ち込みもできる
+ *   ▼ レポートの送り先 [ 🧪 自分だけ（テスト） ]
+ *   ☑ [7] レポートをLINEに送る
+ *
+ * の3行で送る。プルダウンで選ぶのが基本で、そこに無い期間は
+ *   260716-0815   （2026/7/16〜8/15）
+ *   260716-0815t  （末尾 t ＝ 自分だけ／h ＝ グループ）
+ * のように打ち込めば、そのとおりに送る。
+ *
+ * ★グループに送るのは取り消せないので、本番のときは
+ *   1回目のチェックでは送らず、確認だけを出す。
+ *   3分以内にもう一度チェックすると、そこではじめて送る。
+ */
+
+/** 「まず自分だけ」のときの宛先 */
+function rpTestTarget_() {
+  try {
+    const v = String(cfg_("テスト送信先（自分のLINE）") || "").trim();
+    if (v) return v;
+  } catch (e) {}
+  try {
+    for (const id in SENDER_MAP) { if (SENDER_MAP[id] === "ﾏｰｸ") return id; }
+  } catch (e) {}
+  return "";
+}
+
+/** グループLINEの宛先（説明タブ Z1） */
+function rpGroupTarget_() {
+  try {
+    const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("説明");
+    return sh ? String(sh.getRange("Z1").getValue() || "").trim() : "";
+  } catch (e) { return ""; }
+}
+
+/* ---- 期間の読み取り ---- */
+
+/** 全角の数字・記号を半角にそろえる */
+function rpHalf_(s) {
+  return String(s == null ? "" : s)
+    .replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); })
+    .replace(/[／]/g, "/").replace(/[．]/g, ".")
+    .replace(/[－ー―‐]/g, "-").replace(/[　]/g, " ")
+    .trim();
+}
+
+/**
+ * 「260716」「0716」「2026/7/16」などを日付にする。読めなければ null。
+ * 数字だけのときの決まりは、日付メモと同じ。
+ *   4桁 = 月日（年は今年）／6桁 = 年月日（西暦の下2桁）／8桁 = 年月日
+ * 区切りがあるときは桁数は自由。
+ */
+function rpDate_(str, defYear, endOfDay) {
+  const t = rpHalf_(str).replace(/[年月]/g, "/").replace(/日$/, "");
+  let y = defYear, mo = null, d = null;
+
+  const sep = t.split(/[\/\.\-]/).filter(function (x) { return x !== ""; });
+  if (sep.length >= 2 && /[\/\.\-]/.test(t)) {
+    const n = sep.map(function (x) { return parseInt(x, 10); });
+    if (n.some(isNaN)) return null;
+    if (n.length === 2) { mo = n[0]; d = n[1]; }
+    else { y = n[0] < 100 ? 2000 + n[0] : n[0]; mo = n[1]; d = n[2]; }
+  } else {
+    const g = t.replace(/[^0-9]/g, "");
+    if (g.length === 4)      { mo = +g.slice(0, 2); d = +g.slice(2); }
+    else if (g.length === 6) { y = 2000 + (+g.slice(0, 2)); mo = +g.slice(2, 4); d = +g.slice(4); }
+    else if (g.length === 8) { y = +g.slice(0, 4); mo = +g.slice(4, 6); d = +g.slice(6); }
+    else return null;
+  }
+  if (!(mo >= 1 && mo <= 12) || !(d >= 1 && d <= 31)) return null;
+  if (!(y >= 2020 && y <= 2035)) return null;
+
+  const out = endOfDay ? new Date(y, mo - 1, d, 23, 59, 59) : new Date(y, mo - 1, d, 0, 0, 0);
+  // 2月31日のような、ありえない日をはじく
+  if (out.getMonth() !== mo - 1 || out.getDate() !== d) return null;
+  return out;
+}
+
+/**
+ * 期間らんの文字を読む。
+ * 戻り値 { from, to, label, dest } … dest は "test" / "group" / null（指定なし）
+ * 読めなければ { err: "…" }
+ */
+function rpParseRange_(raw, today) {
+  const now = today || new Date();
+  let t = rpHalf_(raw);
+  if (!t) return { err: "期間が空です" };
+
+  // 末尾の t（自分だけ）／h（グループ）
+  let dest = null;
+  const md = t.match(/[\s]*(テスト|本番|[thTH])$/);
+  if (md) {
+    const k = md[1].toLowerCase();
+    dest = (k === "t" || k === "テスト") ? "test" : "group";
+    t = t.slice(0, t.length - md[0].length).trim();
+  }
+  // 「今期（8/16〜9/6）」のような、かっこ書きの飾りは読み飛ばす
+  const key = t.replace(/[（(].*$/, "").replace(/[\s]/g, "");
+
+  const ps = (typeof lrPeriodStart_ === "function")
+    ? lrPeriodStart_(now)
+    : new Date(now.getFullYear(), now.getMonth() - (now.getDate() >= 16 ? 0 : 1), 16);
+
+  const mk = function (from, to, label) {
+    return { from: from, to: new Date(to.getFullYear(), to.getMonth(), to.getDate(), 23, 59, 59),
+             label: label, dest: dest };
+  };
+  if (/^(今期|今回|今)$/.test(key))   return mk(ps, now, "今期");
+  if (/^(前期|先期|前回)$/.test(key)) {
+    const a = new Date(ps.getFullYear(), ps.getMonth() - 1, 16);
+    return mk(a, new Date(ps.getFullYear(), ps.getMonth(), 15), "前期");
+  }
+  if (/^(今日|本日|きょう)$/.test(key)) return mk(new Date(now.getFullYear(), now.getMonth(), now.getDate()), now, "今日");
+  if (/^(昨日|きのう)$/.test(key)) {
+    const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    return mk(y, y, "昨日");
+  }
+  if (/^(今月)$/.test(key)) return mk(new Date(now.getFullYear(), now.getMonth(), 1), now, "今月");
+  if (/^(先月|前月)$/.test(key)) {
+    const a = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return mk(a, new Date(now.getFullYear(), now.getMonth(), 0), "先月");
+  }
+  if (/^(全部|ぜんぶ|すべて|全期間)$/.test(key)) {
+    return mk(new Date(2020, 0, 1), now, "全部");
+  }
+
+  // ここからは日付を打ち込んだとき
+  let parts = t.split(/[〜～~–—]|to/);
+  if (parts.length !== 2) {
+    const bits = t.split("-").filter(function (x) { return x !== ""; });
+    if (bits.length === 2)      parts = bits;
+    else if (bits.length === 6) parts = [bits.slice(0, 3).join("/"), bits.slice(3).join("/")];
+    else if (bits.length === 4 && /^\d{1,2}$/.test(bits[1]))
+      parts = [bits.slice(0, 2).join("/"), bits.slice(2).join("/")];
+    else parts = [t];
+  }
+
+  const from = rpDate_(parts[0], now.getFullYear(), false);
+  if (!from) return { err: rpHowTo_(raw) };
+  if (parts.length === 1) {
+    return { from: from, to: new Date(from.getFullYear(), from.getMonth(), from.getDate(), 23, 59, 59),
+             label: "1日ぶん", dest: dest };
+  }
+  // 終わりの日に年が書いていなければ、始まりの年に合わせる
+  let to = rpDate_(parts[1], from.getFullYear(), true);
+  if (!to) return { err: rpHowTo_(raw) };
+  // 年をまたぐ書き方（1216-0115）は、終わりを翌年とみなす。
+  // ただし翌年にして3か月より長くなるものは、打ち間違いとみなして直してもらう
+  // （0815-0716 は「11か月ぶん」ではなく、前後を逆に打ったと考えるほうが自然）
+  if (to.getTime() < from.getTime() && String(parts[1]).replace(/[^0-9]/g, "").length <= 4) {
+    const next = new Date(to.getFullYear() + 1, to.getMonth(), to.getDate(), 23, 59, 59);
+    if (next.getTime() - from.getTime() <= 92 * 24 * 60 * 60 * 1000) to = next;
+  }
+  if (to.getTime() < from.getTime()) return { err: "終わりの日が、始まりの日より前になっています：" + raw };
+  return { from: from, to: to, label: null, dest: dest };
+}
+
+/** 読めなかったときの、書き方の案内 */
+function rpHowTo_(raw) {
+  return "期間が読めませんでした：「" + String(raw).slice(0, 30) + "」\n" +
+    "プルダウンから選ぶか、次のように打ってください。\n" +
+    "　260716-0815　… 2026/7/16 〜 8/15（月日は4桁）\n" +
+    "　260716-260815　… 年をまたぐときは、終わりにも年を付ける\n" +
+    "　2026/7/16-2026/8/15　… 区切りを入れる書き方でもOK\n" +
+    "　今期／前期／今日／昨日／今月／先月　… 言葉でもOK\n" +
+    "末尾に t を付けると自分だけ、h を付けるとグループに送ります（例 260716-0815t）";
+}
+
+/** 送り先らんの文字を "test" / "group" にする */
+function rpParseDest_(raw) {
+  const t = rpHalf_(raw).replace(/[\s]/g, "");
+  if (!t) return null;
+  if (/(グループ|本番|みんな|全員|h$)/i.test(t)) return "group";
+  if (/(自分|テスト|ひとり|t$)/i.test(t)) return "test";
+  return null;
+}
+
+function rpFmt_(d) {
+  return d.getFullYear() + "/" + pad2_(d.getMonth() + 1) + "/" + pad2_(d.getDate()) +
+    "(" + LR_DOW[d.getDay()] + ")";
+}
+
+/**
+ * そうさボタン [7] の中身。
+ * 「説明」タブの入力らんを読んで、その期間のレポートを送る。
+ * 何が起きたかを文字で返す（そうさボタンの結果らんに出る）。
+ */
+function menuSendReportPanel() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getSheetByName("説明");
+
+  // 入力らんを読む。005-Updater.gs が入っていないときは、既定（今期・自分だけ）
+  let pTxt = "今期", dTxt = "";
+  if (sh && typeof panelInputGet_ === "function") {
+    pTxt = panelInputGet_(sh, PANEL_IN_PERIOD) || "今期";
+    dTxt = panelInputGet_(sh, PANEL_IN_DEST) || "";
+  }
+
+  const r = rpParseRange_(pTxt, new Date());
+  if (r.err) return "⚠️ " + r.err;
+
+  // 送り先は、期間らんの末尾（t/h）＞ 送り先らん ＞ 自分だけ、の順で決める
+  const dest = r.dest || rpParseDest_(dTxt) || "test";
+  const span = rpFmt_(r.from) + " 〜 " + rpFmt_(r.to);
+
+  const to = (dest === "group") ? rpGroupTarget_() : rpTestTarget_();
+  if (!to) {
+    return dest === "group"
+      ? "❌ グループの送り先が分かりません（メニュー「👥 グループIDを設定」で入れてください）"
+      : "❌ 自分の送り先が分かりません（設定タブ「テスト送信先（自分のLINE）」に入れてください）";
+  }
+
+  // グループに送るのは取り消せない。1回目は送らず、もう一度チェックしてもらう
+  if (dest === "group") {
+    const pr = PropertiesService.getScriptProperties();
+    const armed = pr.getProperty("RP_ARMED");
+    const okNow = armed && armed.split("|")[0] === span &&
+      (new Date().getTime() - parseInt(armed.split("|")[1], 10)) < 3 * 60 * 1000;
+    if (!okNow) {
+      pr.setProperty("RP_ARMED", span + "|" + new Date().getTime());
+      return "👥 本番（グループ全員）で送ろうとしています\n" +
+        "　期間：" + span + "\n" +
+        "　まだ送っていません。よければ3分以内に、もう一度チェックしてください。\n" +
+        "　何もしなければ送りません。自分だけに送るなら、送り先らんを" +
+        "「🧪 自分だけ（テスト）」に戻してください。";
+    }
+    pr.deleteProperty("RP_ARMED");
+  }
+
+  if (typeof updProgress_ === "function") updProgress_("集計しています（" + span + "）");
+  sendCustomReport(to, r.from, r.to);
+  if (typeof updBeat_ === "function") updBeat_("送信しました");
+
+  // 本番で送ったあとは、送り先らんを「自分だけ」に戻す。
+  // 戻しておかないと、次にうっかりチェックしたときも本番になってしまう
+  if (dest === "group" && sh && typeof panelInputSet_ === "function") {
+    try { panelInputSet_(sh, PANEL_IN_DEST, PANEL_DEST_TEST); } catch (e) {}
+  }
+
+  return (dest === "group" ? "👥 グループ全員に送りました" : "🧪 自分だけに送りました（テスト）") +
+    "\n　期間：" + span + (r.label ? "（" + r.label + "）" : "");
 }
 
 /* ============ 集計 → Flex Message → LINE送信 ============ */

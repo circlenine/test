@@ -2,11 +2,15 @@
  * ================================================================
  *  みんなの記録ページ（004-WebApp.gs）
  *
- *  ★★★  W006ver  （2026/09/06）  ★★★
+ *  ★★★  W007ver  （2026/09/06）  ★★★
  *
  *  ファイル記号: C=001-Code.gs / E=002-Extras.gs / L=003-LineReport.gs / W=004-WebApp.gs
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *
+ *  [W007ver] 乗り場をタップすると Googleマップ が開くようにした
+ *   ・記録カードの乗り場名と、乗り場ランキングの名前がリンクになる
+ *   ・行き先の表は 002-Extras.gs（MapLink）のもの。入っていなければただの文字のまま
+ *   ・1件ずつURLを持たせるとページが重くなるので、出てくる乗り場の種類ぶんだけ渡す
  *  [W006ver] LINEへの送信を「まず自分だけ」→「グループ」の2段階にした
  *   ・メニューからは、送る前に必ず聞く（自分だけ／グループ／やめる）
  *   ・そうさタブからは、1回目は自分だけ。3分以内にもう1回でグループへ
@@ -34,7 +38,7 @@
  * ================================================================
  */
 
-const WB_VERSION = "W006ver";
+const WB_VERSION = "W007ver";
 
 /** 何日ぶんを持っていくか。古い記録まで全部見たいときは URL に ?all=1 を付ける */
 const WB_DAYS = 190;
@@ -580,8 +584,32 @@ function wbCollect_(all) {
     members: PERSONAL_TABS.slice(),
     periods: wbPeriods_(minD, maxD),
     own: own,
-    opu: opu
+    opu: opu,
+    map: wbMapUrls_(own, opu)
   };
+}
+
+/**
+ * 乗り場名 → Googleマップ のURL。
+ *
+ * 1件ずつURLを持たせると、同じ乗り場を何百回も書くことになってページが重くなる。
+ * 出てくる乗り場の種類だけ（せいぜい数十）を表にして渡し、
+ * 画面側で名前から引く。
+ * 002-Extras.gs（MapLink）が入っていないときは空の表を返す。画面側は
+ * 表に無い乗り場をただの文字として出すので、それでも何も壊れない。
+ */
+function wbMapUrls_(own, opu) {
+  const out = {};
+  if (typeof mapUrlFor_ !== "function") return out;
+  const add = function (list) {
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i].p;
+      if (!p || out[p] !== undefined) continue;
+      try { out[p] = mapUrlFor_(p) || ""; } catch (e) { out[p] = ""; }
+    }
+  };
+  add(own); add(opu);
+  return out;
 }
 
 function wbYmd_(d) {
@@ -732,6 +760,13 @@ main{padding:4px 12px 12px}
   font-variant-numeric:tabular-nums}
 .r2{margin-top:6px;font-size:13px;font-weight:600}
 .r3{margin-top:3px;font-size:11px;color:var(--dim2)}
+
+/* 乗り場をタップすると Googleマップ が開く。
+   青字にすると表が読みにくいので、色は本文のままで 📍 だけを目印にする。
+   指で押す場所なので、上下に少し余白を持たせて当たりを広くする。 */
+a.mapl{color:inherit;text-decoration:none;display:inline-block;padding:2px 0}
+a.mapl .pin{font-size:11px;margin-right:3px;opacity:.75}
+a.mapl:active{opacity:.55}
 .tag{display:inline-block;font-size:10px;border-radius:6px;padding:1px 7px;margin-left:6px}
 .tag.l{background:#442f04;color:var(--gold)}
 .tag.m{background:#082f49;color:#7dd3fc}
@@ -800,6 +835,17 @@ const dLabel = s => { const d = dObj(s);
 const band = m => m >= D.longMin ? 'l' : (m > D.shortMax ? 'm' : 's');
 const bandName = { l:'ロング', m:'ミドル', s:'ショート' };
 const slotLabel = s => (s < 24 ? s : s - 24) + '時';
+
+/* 乗り場名を、タップで Googleマップ が開くリンクにする。
+   行き先が分からない乗り場（表に無い・002-Extras.gs が未導入）は、
+   今までどおりただの文字で出す。押せないだけで、表示は変わらない。 */
+function mapLink(place, cls) {
+  const t = esc(place || '（乗り場不明）');
+  const u = (D && D.map) ? D.map[place] : '';
+  if (!place || !u) return cls ? '<span class="' + cls + '">' + t + '</span>' : t;
+  return '<a class="mapl' + (cls ? ' ' + cls : '') + '" href="' + esc(u) +
+    '" target="_blank" rel="noopener"><span class="pin">📍</span>' + t + '</a>';
+}
 
 /* ---------- 起動 ---------- */
 let D = DATA;          // 合言葉で読み直したときは、こちらが入れ替わる
@@ -1032,7 +1078,7 @@ function placeCard(title, rows, sub) {
     '</b></div>' + empty('3件以上ある乗り場がまだありません') + '</div>';
 
   const rowsHtml = list.map(x =>
-    '<div class="rrow"><div class="t"><span class="nm">' + esc(x.p) + '</span>' +
+    '<div class="rrow"><div class="t">' + mapLink(x.p, 'nm') +
     '<span class="r">' + x.n + '件' + (x.w != null ? ' / 待' + Math.round(x.w) + '分' : '') +
     ' <b>' + yen(x.avg) + '</b></span></div>' +
     '<div class="track">' +
@@ -1116,7 +1162,7 @@ function rideCard(r) {
     '<span class="who">' + esc(r.w) + '</span>' +
     (r.wt != null ? '<span class="who">待' + r.wt + '分</span>' : '') +
     '<span class="yen">' + yen(r.m) + '</span></div>' +
-    '<div class="r2">' + esc(r.p || '（乗り場不明）') +
+    '<div class="r2">' + mapLink(r.p) +
     '<span class="tag ' + b + '">' + bandName[b] + '</span></div>' +
     (r.o ? '<div class="r3">' + esc(r.o) + '</div>' : '') + '</div>';
 }

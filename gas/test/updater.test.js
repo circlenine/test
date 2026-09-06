@@ -52,7 +52,16 @@ let uiWorks = true;
 ctx.SpreadsheetApp = {
   flush: () => {},
   ProtectionType: { SHEET: 'SHEET', RANGE: 'RANGE' },
-  newDataValidation: () => ({ requireCheckbox: () => ({ build: () => ({}) }) }),
+  newDataValidation: () => {
+    // 実物と同じで、どのメソッドも自分を返す（つなげて書けるように）
+    const b = { _list: null, _allow: null, _help: '' };
+    b.requireCheckbox = () => b;
+    b.requireValueInList = (list, drop) => { b._list = list; b._drop = drop; return b; };
+    b.setAllowInvalid = v => { b._allow = v; return b; };
+    b.setHelpText = v => { b._help = v; return b; };
+    b.build = () => ({ list: b._list, allow: b._allow, help: b._help });
+    return b;
+  },
   getActiveSpreadsheet: () => ({
     toast: (m, t) => toasts.push({ t: t, m: m }),
     getSheetByName: n => (n === '説明') ? panel : null,
@@ -99,6 +108,7 @@ function mkPanel() {
   const sizes = {};
   const merges = {};      // 'r,c' → 結合のまとまりの左上 {r,c}
   const heights = {};     // 行 → 高さ
+  const valids = {};      // 'r,c' → 入力規則（プルダウン）
   const prot = [];
   // 結合セルの左上を返す小さな入れ物
   function panelCell(r, c) {
@@ -111,6 +121,7 @@ function mkPanel() {
     _cells: cells,
     _sizes: sizes,
     _heights: heights,
+    _valids: valids,
     _prot: prot,
     // r1..r2 / c1..c2 を1つにまとめる（左上は r1,c1）
     _merge: (r1, c1, r2, c2) => {
@@ -150,7 +161,7 @@ function mkPanel() {
           for (let r = 1; r <= 200; r++) {
             for (let c = 1; c <= 8; c++) {
               if (String(cells[r + ',' + c] || '').indexOf(q) !== -1) {
-                return { getRow: () => r };
+                return { getRow: () => r, getColumn: () => c };
               }
             }
           }
@@ -210,6 +221,14 @@ function mkPanel() {
           for (let i = 0; i < (nr || 1); i++) {
             for (let j = 0; j < (nc || 1); j++) delete cells[(r + i) + ',' + (c + j)];
           }
+          return px;
+        },
+        setDataValidation: rule => {
+          for (let i = 0; i < (nr || 1); i++) valids[(r + i) + ',' + c] = rule;
+          return px;
+        },
+        clearDataValidations: () => {
+          for (let i = 0; i < (nr || 1); i++) delete valids[(r + i) + ',' + c];
           return px;
         },
         isPartOfMerge: () => !!(merges[r + ',' + c]),
@@ -547,13 +566,14 @@ t(String(panel._cells['8,3']) === '▼ チェックを入れると動きます�
 let items = F('panelItems_')();
 // このテストでは 005-Updater しか読み込んでいないので、
 // 004-WebApp や 001-Code の機能は出てこないのが正しい
-t(items.length === 6, 'いつも6つ並ぶ（' + items.length + '個）');
+t(items.length === 7, 'いつも7つ並ぶ（' + items.length + '個）');
 t(items[0].fn === 'menuUpdateCode', '1つめは「コードを更新する」');
 t(items.some(x => x.fn === 'menuWebAppSendLineStep'),
   '入れていない機能も並べる（数が変わると行がずれるため）');
 t(items.map(x => x.fn).join(',') ===
   'menuUpdateCode,menuUpdateStatus,menuFormatAll,menuRestoreCode,' +
-  'menuWebAppSendLineStep,menuWebAppCheck', 'スプシに置いてある番号どおりの並び');
+  'menuWebAppSendLineStep,menuWebAppCheck,menuSendReportPanel',
+  'スプシに置いてある番号どおりの並び');
 t(F('panelHas_')('menuUpdateCode') === true, '入っている機能は分かる');
 t(F('panelHas_')('menuWebAppSendLineStep') === false, '入っていない機能も分かる');
 t(F('panelHas_')('menuUpdateCode') === true, 'ある関数は true');
@@ -582,7 +602,8 @@ F('panelOnEdit')({ range: { getSheet: () => panel, getColumn: () => 2,
                             getRow: () => TOP }, value: 'TRUE' });
 t(panel._cells[TOP + ',2'] === false, '終わったらチェックが外れる');
 t(lastPut() !== undefined, '更新が実際に走った');
-const resRow = TOP + F('panelItems_')().length + 2;
+// 「結果」の行を探して書くので、入力らんが増えても付いていける
+const resRow = F('panelResultRow_')(panel);
 has(panel._cells[resRow + ',3'], '✅', '結果らんに出る');
 has(panel._cells[resRow + ',3'], 'コードを更新する', 'どれを動かしたか分かる');
 
@@ -604,7 +625,8 @@ F('panelOnEdit')({ range: { getSheet: () => ({ getName: () => 'ﾀﾞｲｽｹ' 
 t(lastPut() === undefined, '別のタブなら動かない');
 F('panelOnEdit')({});
 F('panelOnEdit')(null);
-t(errs.length === 0, '変な呼ばれ方をしても落ちない');
+t(errs.length === 0, '変な呼ばれ方をしても落ちない' +
+  (errs.length ? '（' + JSON.stringify(errs) + '）' : ''));
 
 console.log('\n■ 1分おきの見張りでも動く（アプリでonEditが効かないとき用）');
 reset([['001-Code.gs', 'あたらしい']]);
@@ -634,7 +656,7 @@ F('menuMakePanel')();
 panel._cells[TOP + ',2'] = true;
 F('panelWatch')();
 t(panel._cells[TOP + ',2'] === false, 'チェックは外れる（押しっぱなしにならない）');
-has(panel._cells[resRow + ',3'], '✅', '処理自体は最後まで通る');
+has(panel._cells[F('panelResultRow_')(panel) + ',3'], '✅', '処理自体は最後まで通る');
 
 console.log('\n■ 8行目より上は絶対に触らない');
 reset([['001-Code.gs', 'あたらしい']]);
@@ -684,7 +706,8 @@ console.log('\n■ チェックのらんだけを自分だけが押せるよう�
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
 t(panel._prot.length === 1, '保護がかかる');
-t(panel._prot[0]._a1 === 'B9:B14', 'チェックのらん（B列）だけを守る');
+t(panel._prot[0]._a1 === 'B9:B17',
+  'チェックのらん（B列）を、置いてある行のぶんだけ守る（入力らんも含む）');
 t(panel._prot[0]._editors.length === 0, 'ほかの編集者は外される（＝自分だけ）');
 t(panel._prot[0]._domain === false, '同じドメインの人もまとめて外す');
 has(alerts[alerts.length - 1].b, 'あなただけが触れるように', 'そう伝える');
@@ -793,17 +816,22 @@ t(F('panelHeadRow_')(panel) === 158, '150行足しても見つける');
 console.log('\n■ 足りないボタンだけ足す');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuMakePanel')();
-// 4つしか無かった昔の状態を作る（5つめ6つめを消す）
-delete panel._cells['13,2']; delete panel._cells['13,3']; delete panel._cells['13,4'];
-delete panel._cells['14,2']; delete panel._cells['14,3']; delete panel._cells['14,4'];
+// 4つしか無かった昔の状態を作る（5つめ以降を消す）
+[13, 14, 15, 16, 17].forEach(r => {
+  delete panel._cells[r + ',2']; delete panel._cells[r + ',3']; delete panel._cells[r + ',4'];
+});
 panel._cells['9,3'] = '[1] コードを更新する（じぶんで整えた）';
 F('menuMakePanel')();
 t(panel._cells['9,3'] === '[1] コードを更新する（じぶんで整えた）',
   'すでにあるボタンの文言は書き換えない');
-t(String(panel._cells['13,3']).indexOf('URLをLINE') !== -1, '5つめが足された');
-t(String(panel._cells['14,3']).indexOf('開けるか調べる') !== -1, '6つめが足された');
-t(panel._cells['13,2'] === false, '足した行にチェックボックスが付く');
-has(alerts[alerts.length - 1].b, '2個のボタンを足しました', '何個足したか伝える');
+const added = F('panelReadRows_')(panel).map(r => String(r.text));
+t(added.some(x => x.indexOf('URLをLINE') !== -1), '5つめが足された');
+t(added.some(x => x.indexOf('開けるか調べる') !== -1), '6つめが足された');
+t(added.some(x => x.indexOf('レポートをLINE') !== -1), '7つめが足された');
+t(F('panelReadRows_')(panel).every(r => r.value === false),
+  '足した行にチェックボックスが付く');
+has(alerts[alerts.length - 1].b, '3個のボタンを足しました', '何個足したか伝える');
+has(alerts[alerts.length - 1].b, 'レポートの期間', '入力らんも置いたと伝える');
 
 console.log('\n■ そろっていれば何も足さない');
 // 結果の記録（Y5・Z5）は毎回書かれるので、ボタンの部分だけを比べる
@@ -909,6 +937,9 @@ has(alerts[alerts.length - 1].b, '書き換えてください', '直し方も教
 console.log('\n■ 文言を直したら、そのまま使える');
 panel._cells['40,3'] = '[5] ページのURLをLINEに送る';
 panel._cells['41,3'] = '[6] ページが開けるか調べる';
+panel._cells['42,2'] = false;
+panel._cells['42,3'] = '[7] レポートをLINEに送る';
+panel._cells['43,2'] = '結果';
 const st = F('panelCheck_')(panel);
 t(st.dup.length === 0, '重複が消えた');
 t(st.missing.length === 0, '足りないものも無い');
@@ -989,15 +1020,15 @@ gapLayout();
 // 重複を直した状態にする
 panel._cells['44,3'] = '💬 ページのURLをLINEに送る';
 panel._cells['46,3'] = '🩺 ページが開けるか調べる';
-t(F('panelCheck_')(panel).missing.length === 0, 'そろっている');
+t(F('panelCheck_')(panel).missing.length === 1, '[7] だけ足りない');
 // 5つめ6つめを消して、足りない状態を作る
 delete panel._cells['44,2']; delete panel._cells['44,3'];
 delete panel._cells['46,2']; delete panel._cells['46,3'];
 const miss = F('panelCheck_')(panel).missing;
-t(miss.length === 2, '2つ足りない');
+t(miss.length === 3, '3つ足りない');
 F('menuMakePanel')();
 t(F('panelCheck_')(panel).missing.length === 0, '足したのでそろった');
-t(F('panelReadRows_')(panel).length === 6, '6つになった');
+t(F('panelReadRows_')(panel).length === 7, '7つになった');
 
 console.log('\n■ 結果らんが結合されていても書ける');
 gapLayout();
@@ -1016,11 +1047,106 @@ panel._cells['36,2'] = true;
 F('panelWatch')();
 t(true, '結合の中でも落ちない');
 
+console.log('\n■ [7] の入力らん（期間・送り先）');
+reset([['001-Code.gs', 'あたらしい']]);
+F('menuMakePanel')();
+{
+  const pc = F('panelInputCell_')(panel, vm.runInContext('PANEL_IN_PERIOD', ctx));
+  const dc = F('panelInputCell_')(panel, vm.runInContext('PANEL_IN_DEST', ctx));
+  t(!!pc && !!dc, '期間と送り先の2行が置かれる');
+  t(pc.col === 4 && dc.col === 4, '入力するのは見出しのすぐ右（D列）');
+  const rows = F('panelReadRows_')(panel);
+  const last = rows[rows.length - 1];
+  t(String(last.text).indexOf('レポートをLINE') !== -1, '入力らんの下が [7]');
+  t(pc.row === last.row - 2 && dc.row === last.row - 1, '[7] のすぐ上に並ぶ');
+  t(F('panelInputGet_')(panel, vm.runInContext('PANEL_IN_PERIOD', ctx)) === '今期',
+    'はじめは「今期」');
+  t(F('panelInputGet_')(panel, vm.runInContext('PANEL_IN_DEST', ctx)) ===
+    vm.runInContext('PANEL_DEST_TEST', ctx), 'はじめは「自分だけ（テスト）」');
+  t(panel._cells[pc.row + ',2'] === '', '入力らんの行にはチェックを置かない');
+
+  // プルダウン
+  const v = panel._valids[pc.row + ',4'];
+  t(!!v && v.list.length > 1, '期間はプルダウンから選べる');
+  t(v.allow === true, '一覧に無い期間も打ち込める（260716-0815 など）');
+  t(String(v.list[0]).indexOf('今期') === 0, '先頭は今期');
+  const dv = panel._valids[dc.row + ',4'];
+  t(dv.list.length === 2, '送り先は2つだけ');
+  t(dv.allow === false, '送り先は打ち込めない（押し間違いを防ぐ）');
+
+  // 何度置いても増えない
+  F('menuMakePanel')();
+  t(F('panelInputCell_')(panel, vm.runInContext('PANEL_IN_PERIOD', ctx)).row === pc.row,
+    '何度やっても入力らんは増えない');
+
+  // 書き込み
+  F('panelInputSet_')(panel, vm.runInContext('PANEL_IN_DEST', ctx), 'あとで戻す用');
+  t(F('panelInputGet_')(panel, vm.runInContext('PANEL_IN_DEST', ctx)) === 'あとで戻す用',
+    '送り先らんに書き戻せる（本番のあと自分だけに戻すため）');
+}
+
+console.log('\n■ 期間のプルダウンの中身');
+{
+  const list = F('panelPeriodChoices_')(new Date(2026, 8, 6));
+  t(list.length >= 15, '今期・前期・過去1年ぶん・今日・昨日などが並ぶ');
+  t(list[0].indexOf('8/16') !== -1 && list[0].indexOf('9/6') !== -1,
+    '今期は 8/16〜9/6');
+  t(list[1].indexOf('前期') === 0, '2つめは前期');
+  t(list.some(x => x.indexOf('昨日') === 0), '昨日もある');
+  t(list.indexOf('先月') !== -1, '先月もある');
+  // 選んだ文字が、そのまま読み取れる形になっているか
+  t(list.every(x => x.length < 40), '長すぎない（スマホでも読める）');
+}
+
+console.log('\n■ コードを更新したら、増えたボタンを自分で足す');
+{
+  reset([['001-Code.gs', 'あたらしい']]);
+  F('menuMakePanel')();
+  // 古いコードで置いた状態を作る（[7] と入力らんを消し、目印も古くする）
+  const rows = F('panelReadRows_')(panel);
+  const last = rows[rows.length - 1].row;
+  [last, last - 1, last - 2].forEach(r => {
+    delete panel._cells[r + ',2']; delete panel._cells[r + ',3']; delete panel._cells[r + ',4'];
+  });
+  props['PANEL_SETUP_VER'] = 'U006ver';
+  t(F('panelCheck_')(panel).missing.length === 1, '[7] が無い状態');
+
+  F('panelWatch')();                       // 1分おきの見張りが気づいて足す
+  t(F('panelCheck_')(panel).missing.length === 0, '見張りが [7] を足した');
+  t(!!F('panelInputCell_')(panel, vm.runInContext('PANEL_IN_PERIOD', ctx)),
+    '入力らんも一緒に置く');
+  t(props['PANEL_SETUP_VER'] === vm.runInContext('UPD_VERSION', ctx),
+    '足したことを覚えて、毎分やり直さない');
+
+  // 2回目は何もしない
+  const snap = JSON.stringify(panel._cells);
+  F('panelWatch')();
+  t(JSON.stringify(panel._cells) === snap, '2回目は何もしない');
+}
+
+console.log('\n■ 押されているものがあるときは、行を動かさない');
+{
+  reset([['001-Code.gs', 'あたらしい']]);
+  F('menuMakePanel')();
+  const rows = F('panelReadRows_')(panel);
+  const last = rows[rows.length - 1].row;
+  [last, last - 1, last - 2].forEach(r => {
+    delete panel._cells[r + ',2']; delete panel._cells[r + ',3']; delete panel._cells[r + ',4'];
+  });
+  props['PANEL_SETUP_VER'] = 'U006ver';
+  vm.runInContext('formatRan = 0;', ctx);
+  panel._cells[(TOP + 2) + ',2'] = true;        // [3] 全タブをまとめて整形する
+  F('panelWatch')();
+  t(vm.runInContext('formatRan', ctx) === 1, '押されたものが先に動く');
+  t(F('panelCheck_')(panel).missing.length === 1,
+    'そのときは行を差し込まない（押した行がずれるため）');
+}
+
 console.log('\n■ バージョン');
-t(vm.runInContext('UPD_VERSION', ctx) === 'U007ver', 'U007ver になっている');
+t(vm.runInContext('UPD_VERSION', ctx) === 'U008ver', 'U008ver になっている');
 reset([['001-Code.gs', 'あたらしい']]);
 F('menuUpdateStatus')();
-has(alerts[0].b, 'U007ver', '状態画面にバージョンが出る');
+has(alerts[0].b, 'U008ver', '状態画面にバージョンが出る');
 
 console.log('\n■ 番号でも見分けられる（文言を書き換えてしまったとき用）');
 {
@@ -1089,7 +1215,7 @@ console.log('\n■ 推定残り時間を出す');
   t(S(120) === '約2分', 'ちょうど何分ならそれだけ');
   t(S(0.4) === '約1秒', '0秒とは言わない');
   const items = F('panelItems_')();
-  t(items.every(x => x.sec > 0), '6つとも見込み時間を持っている');
+  t(items.every(x => x.sec > 0), '7つとも見込み時間を持っている');
 }
 
 console.log('\n■ 押したら、まず空にしてから「実行中（推定〇〇）」を出す');

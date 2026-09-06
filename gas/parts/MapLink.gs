@@ -2,13 +2,13 @@
  * ================================================================
  *  G列の乗り場名 → Googleマップ リンク（MapLink.gs）
  *
- *  ★統合スクリプト（Code.gs）と同じプロジェクトに別ファイルとして追加。
- *    normalizePlace_ / ALL_TABS / C_PLACE 等は統合スクリプト側のものを使う。
+ *  ★E005ver から 002-Extras.gs に同梱されました。
+ *    単体で貼る必要はありません（tools/build_extras.py が束ねます）。
  *
- *  ★リンクを貼りっぱなしにするには、統合スクリプトの formatTab_ の
- *      applyStyles_(sheet, out, meta);
- *    の直後に次の1行を足してください（整形のたびに貼り直される）:
- *      applyMapLinks_(sheet);
+ *  ★001-Code.gs（C024ver 以降）の formatTab_ が、整形の最後に
+ *    applyMapLinks_(sheet) を呼びます。整形のたびに貼り直されるので、
+ *    リンクが消えることはありません。
+ *    設定タブの「乗り場にマップリンクを付ける」を いいえ にすると貼りません。
  *
  *  G列は formatTab_ が毎回 setValues で書き戻すため、
  *  =HYPERLINK() の数式では消えてしまう。そこでリッチテキストの
@@ -129,6 +129,10 @@ function applyMapLinks_(sheet) {
   const rg = sheet.getRange(START_ROW, C_PLACE, n, 1);
   const vals = rg.getValues();
   const sizes = rg.getFontSizes();
+  // いまの見た目をそのまま残す。リンクにすると既定では青字＋下線になるが、
+  // 表の中で乗り場だけ色が変わると読みにくいので、元の太さ・色のままにする
+  const weights = rg.getFontWeights();
+  const colors  = rg.getFontColors();
 
   const out = [];
   let linked = 0;
@@ -136,9 +140,9 @@ function applyMapLinks_(sheet) {
     const text = String(vals[i][0] == null ? "" : vals[i][0]);
     const style = SpreadsheetApp.newTextStyle()
       .setFontSize(sizes[i][0] || 8)
-      .setBold(true)
+      .setBold(String(weights[i][0]) === "bold")
       .setUnderline(false)
-      .setForegroundColor("#000000")
+      .setForegroundColor(colors[i][0] || "#000000")
       .build();
 
     let b = SpreadsheetApp.newRichTextValue().setText(text);
@@ -158,8 +162,7 @@ function menuMapLinksApply() {
     color: "#188038",
     desc: "全タブのG列（乗り場）に、Googleマップへのリンクを貼ります。<br>" +
           "見た目（文字サイズ・色）は変わりません。タップでマップが開きます。<br><br>" +
-          "※整形を実行するとリンクは消えます。貼りっぱなしにするには " +
-          "<b>formatTab_</b> に1行足してください（README参照）。",
+          "※ふだんは整形のたびに自動で貼られます。ここは貼り直したいとき用です。",
     applyLabel: "リンクを貼る",
     fn: "runMapLinksApply",
     h: 200
@@ -181,7 +184,7 @@ function runMapLinksApply(_apply) {
   });
   progSet_(100, "完了");
   return "✅ " + total + "件の乗り場にマップリンクを貼りました\n──────────────\n" + body +
-         "\n※整形を実行すると消えます。formatTab_ に applyMapLinks_(sheet); を足すと貼りっぱなしになります。";
+         "\n※整形のたびに自動で貼り直されます（001-Code.gs C024ver 以降）。";
 }
 
 /**

@@ -1,12 +1,20 @@
 /**
  * ================================================================
  *  僕はグールだ【記録用】 スプレッドシート  統合スクリプト
- *  ★★★  C023ver  （2026/09/06）  ★★★   ← もとは version 232
+ *  ★★★  C024ver  （2026/09/06）  ★★★   ← もとは version 232
  *
  *  ファイル記号: C=001-Code.gs / L=003-LineReport.gs / E=002-Extras.gs
  *  ※ Apps Script 上のファイル名も「001-Code」にそろえてください
  *  直したら数字を1つ増やし、下の履歴に何を直したか書く。
  *  いま動いているバージョンは メニュー「ℹ️ バージョンを確認」で見られる。
+ *
+ *  [C024ver]
+ *   ・年見出し（2026年 など）の上の線を「太線」にした
+ *     いちばん上の年見出し（4行目）には引かない
+ *     （見出し行のすぐ下なので、二重線に見えてしまうため）
+ *   ・整形のたびに、G列の乗り場に Googleマップ のリンクを貼るようにした
+ *     タップするとマップが開く。002-Extras.gs が入っているときだけ動く
+ *   ・設定に「乗り場にマップリンクを付ける」を足した（いいえ にすると貼らない）
  *
  *  [C023ver]
  *   ・設定に「テスト送信先（自分のLINE）」を足した
@@ -371,7 +379,7 @@
 /* ============ 1. 基本設定 ============ */
 
 /** このファイルのバージョン（メニュー「ℹ️ バージョンを確認」に出る） */
-const CODE_VERSION = "C023ver";
+const CODE_VERSION = "C024ver";
 
 const SENDER_MAP = {
   "Ued4659890c83b3b0bcf2a3f8bf008e7f": "ﾀﾞｲｽｹ",
@@ -442,6 +450,8 @@ const SETTINGS_DEFS = [
     help: "みんなの記録ページを見られるGoogleアカウントを、カンマ区切りで。" +
           "空なら制限なし。※デプロイの「実行するユーザー」を" +
           "「ウェブアプリにアクセスしているユーザー」にしないと効きません" },
+  { key: "乗り場にマップリンクを付ける", def: "はい", kind: "text",
+    help: "「はい」にすると、整形のたびにG列の乗り場をタップでGoogleマップが開くようにします" },
   { key: "テスト送信先（自分のLINE）", def: "", kind: "text",
     help: "「まず自分だけに送る」ときの宛先。空なら、登録済みの「ﾏｰｸ」に送ります" },
   { key: "ページの合言葉",             def: "", kind: "text",
@@ -2490,6 +2500,14 @@ function formatTab_(sheet) {
 
   applyStyles_(sheet, out, meta);
 
+  // G列（乗り場）にGoogleマップのリンクを貼る。
+  // 002-Extras.gs が入っていないときは、何もしないで通り過ぎる。
+  // G列は上で setValues で書き戻しているので、ここで貼り直さないと消えてしまう。
+  try {
+    if (cfg_("乗り場にマップリンクを付ける") !== "いいえ" &&
+        typeof applyMapLinks_ === "function") applyMapLinks_(sheet);
+  } catch (e) { logErr_("mapLink:" + sheet.getName(), e); }
+
   putNoticeRow_(sheet);
 
   sheet.getRange(3, C_MARK).setValue("直").setFontSize(7)
@@ -2687,10 +2705,18 @@ function applyStyles_(sheet, out, meta) {
   }
   sheet.getRange(START_ROW, C_PLACE,  n, 1).setFontSizes(placeSize);
 
-  // 年見出し行の上に線を引く（12月 → 翌年 の境目が分かるように）※まとめて1回
-  if (yearRowA1.length) {
-    sheet.getRangeList(yearRowA1)
-      .setBorder(true, null, null, null, null, null, "#000000", SpreadsheetApp.BorderStyle.SOLID);
+  // 年見出し行の上に太線を引く（12月 → 翌年 の境目が分かるように）※まとめて1回
+  //
+  // いちばん上の年見出し（4行目）には引かない。
+  // 見出し行のすぐ下なので、線を引くと表の枠と重なって二重線に見えるため。
+  // 2つ目から下（2025年 → 2026年 のような区切り）だけを太線にする。
+  const yearTopA1 = yearRowA1.filter(function (a1) {
+    return a1.indexOf("A" + START_ROW + ":") !== 0;
+  });
+  if (yearTopA1.length) {
+    sheet.getRangeList(yearTopA1)
+      .setBorder(true, null, null, null, null, null,
+                 "#000000", SpreadsheetApp.BorderStyle.SOLID_THICK);
   }
 
   // 営業日の変わり目に下線。

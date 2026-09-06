@@ -7,9 +7,13 @@ Strategy.gs / Opucha.gs / ChartFit.gs を Extras.gs に束ねる。
 """
 import pathlib, re, sys
 
-VERSION = "E004ver"
-DATE = "2026/09/02"
-CHANGELOG = """ *  [E004ver] ファイル名を 002-Extras.gs にした（中身の動きは変えていない）
+VERSION = "E005ver"
+DATE = "2026/09/06"
+CHANGELOG = """ *  [E005ver] 乗り場 → Googleマップ（MapLink）を、このファイルに同梱した
+ *   ・G列の乗り場をタップすると Googleマップ が開く
+ *   ・001-Code.gs の整形が終わるたびに、自動で貼り直す
+ *   ・行き先が違うものは メニュー「🗺 マップの行き先を確認する」で一覧できる
+ *  [E004ver] ファイル名を 002-Extras.gs にした（中身の動きは変えていない）
  *  [E003ver] 金額の区分（ショート・ロングの境目）を「設定」タブから変えられるようにした
  *  [E002ver] ファイル記号を K → C に変更（Code.gs に合わせた）
  *
@@ -20,7 +24,8 @@ CHANGELOG = """ *  [E004ver] ファイル名を 002-Extras.gs にした（中身
  *   ・金額区分は ショート≦￥4,999 / ミドル〜￥9,999 / ロング≧￥10,000"""
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SRC = [("Strategy.gs", "立ち回り分析"), ("Opucha.gs", "オプチャ印"), ("ChartFit.gs", "グラフの大きさ")]
+SRC = [("Strategy.gs", "立ち回り分析"), ("Opucha.gs", "オプチャ印"),
+       ("ChartFit.gs", "グラフの大きさ"), ("MapLink.gs", "乗り場→Googleマップ")]
 
 head = f'''/**
  * ================================================================
@@ -38,6 +43,7 @@ head = f'''/**
  *    ・Strategy … 🎯 立ち回り分析
  *    ・Opucha   … 🏷 オプチャ印を検索して付ける／外す
  *    ・ChartFit … 📐 まとめスプシのグラフをZ列の幅に揃える
+ *    ・MapLink  … 🗺 G列の乗り場をタップで Googleマップ
  *
  *  ★記録用スプシの Apps Script に「新しいファイル」として追加してください。
  *    コード.gs は触りません。LineReport.gs とも名前は衝突しません。

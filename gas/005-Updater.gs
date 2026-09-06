@@ -2,7 +2,22 @@
  * ================================================================
  *  コードの自動更新（005-Updater.gs）
  *
- *  ★★★  U007ver  （2026/09/06）  ★★★
+ *  ★★★  U008ver  （2026/09/06）  ★★★
+ *
+ *  [U008ver]
+ *   ・ボタン [7]「レポートをLINEに送る」を足した（中身は 003-LineReport.gs）
+ *     ・すぐ上に「▼ レポートの期間」「▼ レポートの送り先」の2行を置く
+ *     ・期間はプルダウンから選ぶ。無い期間は 260716-0815 のように打ち込める
+ *     ・送り先は 🧪自分だけ（テスト）／👥グループ全員（本番）の2つだけ
+ *   ・コードを更新したあと、増えたボタンを自分で足すようにした
+ *     更新中に動いているのは古いコードなので、その場では新しいボタンを知らない。
+ *     次の1分おきの見張りで足す。スマホにはメニューが無いので、これが無いと
+ *     新しいボタンを永久に使えないままになる
+ *   ・チェックのらんを守る範囲を、置いてある行から決めるようにした
+ *     個数で数えていたので、あいだに入力らんを挟むと
+ *     いちばん下のボタンだけ誰でも押せる状態になっていた
+ *   ・「止まった」とみなす時間を、ボタンごとに変えられるようにした
+ *     レポートは集計に何分もかかるので、2分半では早すぎる（[7]は7分）
  *
  *  [U007ver]
  *   ・[5] を「1回目は自分だけ／3分以内にもう1回でグループ」に変えた
@@ -90,7 +105,7 @@
  * ================================================================
  */
 
-const UPD_VERSION = "U007ver";
+const UPD_VERSION = "U008ver";
 
 /** ドライブ上の置き場所（GitHubを使わないときの読み元） */
 const UPD_FOLDER  = "taxi-gas";
@@ -710,8 +725,156 @@ function panelItems_() {
       note: "1回目は自分だけ。3分以内にもう1回でグループ全員へ" },
     { key: "開けるか調べる",       label: "[6] ページが開けるか調べる",  fn: "menuWebAppCheck",
       sec: 30,
-      note: "みんなの記録ページが本当に開けるか、実際に試します" }
+      note: "みんなの記録ページが本当に開けるか、実際に試します" },
+    { key: "レポートをLINE",       label: "[7] レポートをLINEに送る",    fn: "menuSendReportPanel",
+      sec: 90, stall: 420,
+      note: "すぐ上の「期間」と「送り先」のとおりに送ります。" +
+            "グループ（本番）は、もう一度チェックで確定します" }
   ];
+}
+
+/* ---- [7] の入力らん（プルダウン） ---- */
+
+/** 入力らんの見出し。この文字でセルを探すので、変えると読めなくなる */
+const PANEL_IN_PERIOD = "▼ レポートの期間";
+const PANEL_IN_DEST   = "▼ レポートの送り先";
+const PANEL_DEST_TEST  = "🧪 自分だけ（テスト）";
+const PANEL_DEST_GROUP = "👥 グループ全員（本番）";
+
+/**
+ * 期間のプルダウンに出す一覧。
+ *
+ * 記録を読みにいかない。読むと（全タブ走査で）数秒かかり、
+ * ボタンを置くたびに待たされるため。16日起点の期間を、こよみだけで作る。
+ */
+function panelPeriodChoices_(today) {
+  const now = today || new Date();
+  const dow = ["日", "月", "火", "水", "木", "金", "土"];
+  const md = function (d) { return (d.getMonth() + 1) + "/" + d.getDate() + "(" + dow[d.getDay()] + ")"; };
+
+  const ps = (typeof lrPeriodStart_ === "function")
+    ? lrPeriodStart_(now)
+    : new Date(now.getFullYear(), now.getMonth() - (now.getDate() >= 16 ? 0 : 1), 16);
+
+  const out = ["今期（" + md(ps) + "〜" + md(now) + "）"];
+  for (let i = 1; i <= 12; i++) {
+    const a = new Date(ps.getFullYear(), ps.getMonth() - i, 16);
+    const b = new Date(ps.getFullYear(), ps.getMonth() - i + 1, 15);
+    out.push((i === 1 ? "前期（" : (a.getFullYear() + "年 ")) +
+             md(a) + "〜" + md(b) + (i === 1 ? "）" : ""));
+  }
+  const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  out.push("今日（" + md(now) + "）");
+  out.push("昨日（" + md(y) + "）");
+  out.push("今月");
+  out.push("先月");
+  return out;
+}
+
+/**
+ * 見出しの文字からセルを探して、そのすぐ右のセルを返す。無ければ null。
+ * 行も列も決め打ちにしない（見やすいように動かしても付いていけるように）。
+ */
+function panelInputCell_(sh, label) {
+  if (!sh) return null;
+  try {
+    const hit = sh.createTextFinder(label).matchEntireCell(false).findNext();
+    if (hit) return { row: hit.getRow(), col: hit.getColumn() + 1 };
+  } catch (e) {}
+  return null;
+}
+
+/** 入力らんの中身を読む。無ければ "" */
+function panelInputGet_(sh, label) {
+  const c = panelInputCell_(sh, label);
+  if (!c) return "";
+  try { return String(sh.getRange(c.row, c.col).getValue() || "").trim(); }
+  catch (e) { return ""; }
+}
+
+/** 入力らんに書き込む */
+function panelInputSet_(sh, label, value) {
+  const c = panelInputCell_(sh, label);
+  if (!c) return false;
+  try { sh.getRange(c.row, c.col).setValue(value); return true; }
+  catch (e) { return false; }
+}
+
+/** 期間のプルダウンを作り直す（日が変われば中身も変わるので、置くたびに入れ直す） */
+function panelSetPeriodList_(sh) {
+  const c = panelInputCell_(sh, PANEL_IN_PERIOD);
+  if (!c) return false;
+  try {
+    // 「打ち込みもできる」ようにする（setAllowInvalid(true)）。
+    // 一覧に無い期間は 260716-0815 のように打てば、そのとおりに送れる。
+    const rule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(panelPeriodChoices_(), true)
+      .setAllowInvalid(true)
+      .setHelpText("一覧から選ぶか、260716-0815 のように打ってください（末尾 t=自分だけ / h=グループ）")
+      .build();
+    sh.getRange(c.row, c.col).setDataValidation(rule);
+    return true;
+  } catch (e) { logErr_("panelSetPeriodList", e); return false; }
+}
+
+/** 送り先のプルダウン（2つだけ。打ち込みは受け付けない） */
+function panelSetDestList_(sh) {
+  const c = panelInputCell_(sh, PANEL_IN_DEST);
+  if (!c) return false;
+  try {
+    const rule = SpreadsheetApp.newDataValidation()
+      .requireValueInList([PANEL_DEST_TEST, PANEL_DEST_GROUP], true)
+      .setAllowInvalid(false)
+      .setHelpText("グループ（本番）は、チェックしたあともう一度チェックで確定します")
+      .build();
+    sh.getRange(c.row, c.col).setDataValidation(rule);
+    return true;
+  } catch (e) { logErr_("panelSetDestList", e); return false; }
+}
+
+/**
+ * [7] の入力らん（期間・送り先）を用意する。
+ *
+ * すでに置いてあれば、プルダウンの中身だけ入れ直して、位置も文言も触らない。
+ * 無ければ [7] のすぐ上に2行だけ差し込む。
+ * ここも clear() は絶対にしない（もともと入っているものを消さないため）。
+ */
+function panelEnsureInputs_(sh) {
+  if (!sh) return false;
+  if (panelInputCell_(sh, PANEL_IN_PERIOD)) {
+    panelSetPeriodList_(sh); panelSetDestList_(sh);
+    return false;
+  }
+
+  // [7] の行を探す。無ければ、いちばん下のボタンの下に置く
+  const rows = panelReadRows_(sh);
+  let at = 0;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].item && rows[i].item.key === "レポートをLINE") { at = rows[i].row; break; }
+  }
+  if (!at) at = panelLastRow_(sh);
+  if (!at) return false;
+
+  const top = panelTop_(sh);
+  const chk = panelChkCol_(sh, top);
+  sh.insertRowsBefore(at, 2);
+
+  sh.getRange(at,     chk + 1).setValue(PANEL_IN_PERIOD);
+  sh.getRange(at + 1, chk + 1).setValue(PANEL_IN_DEST);
+  sh.getRange(at,     chk + 2).setValue("今期");
+  sh.getRange(at + 1, chk + 2).setValue(PANEL_DEST_TEST);
+  sh.getRange(at, chk + 1, 2, 1).setFontWeight("bold").setFontSize(11)
+    .setVerticalAlignment("middle");
+  sh.getRange(at, chk + 2, 2, 1).setFontSize(12).setVerticalAlignment("middle")
+    .setHorizontalAlignment("left").setWrap(true);
+  // チェックの列は空にしておく。ここにチェックがあると、
+  // ボタンの行と間違えて実行してしまう
+  try { sh.getRange(at, chk, 2, 1).clearDataValidations().setValue(""); } catch (e) {}
+  try { sh.setRowHeights(at, 2, 34); } catch (e) {}
+
+  panelSetPeriodList_(sh);
+  panelSetDestList_(sh);
+  return true;
 }
 
 /** 「約1分30秒」のような、読みやすい形にする */
@@ -729,7 +892,8 @@ const PANEL_FROM = {
   menuFormatAll:      "001-Code",
   menuRestoreCode:    "005-Updater",
   menuWebAppSendLineStep: "004-WebApp",
-  menuWebAppCheck:    "004-WebApp"
+  menuWebAppCheck:    "004-WebApp",
+  menuSendReportPanel: "003-LineReport"
 };
 
 /** その関数がこのプロジェクトに入っているか */
@@ -999,11 +1163,15 @@ function menuMakePanel() {
     }
 
     const added = panelSync_(sh, already);
+    const madeIn = panelEnsureInputs_(sh);
+    PropertiesService.getScriptProperties().setProperty("PANEL_SETUP_VER", UPD_VERSION);
     return updTell_("🧰 ボタンはもう置いてあります（" + already + "行目）",
       "ボタン：" + (already + 1) + "行目から" + panelReadRows_(sh).length + "個\n" +
       "結果らん：" + panelResultRow_(sh) + "行目\n\n" +
       (added ? "足りなかった " + added + "個のボタンを足しました。\n"
              : "そろっています。並びはそのままにしました。\n") +
+      (madeIn ? "[7] の上に「レポートの期間」「レポートの送り先」を足しました。\n"
+              : "期間のプルダウンを、今日の日付に合わせて入れ直しました。\n") +
       "見やすいように動かしたり結合したりしていても、そのまま使えます。\n" +
       "見張りのしくみを入れ直しました。\n\n" +
       (locked ? "🔒 チェックのらんは、あなただけが触れるようにしてあります。"
@@ -1045,8 +1213,12 @@ function menuMakePanel() {
 
   PropertiesService.getScriptProperties().setProperty("PANEL_ROW", String(head));
 
+  // [7]（レポート送信）の上に、期間と送り先の入力らんを置く
+  panelEnsureInputs_(sh);
+
   const locked = panelProtect_(sh);
   panelInstall_();
+  PropertiesService.getScriptProperties().setProperty("PANEL_SETUP_VER", UPD_VERSION);
 
   updTell_("🧰 ボタンを置きました（" + PANEL_TAB + "タブ " + head + "行目から）",
     "スマホのスプレッドシートアプリからは、ここのチェックで動かせます。\n" +
@@ -1093,11 +1265,20 @@ function panelSync_(sh, headRow) {
   return add;
 }
 
-/** チェックのらん（A列のボタン部分だけ） */
+/**
+ * チェックのらん（ボタンが並んでいるぶんだけ）。
+ *
+ * 個数で数えない。あいだに空行や入力らん（期間・送り先）を挟むと、
+ * 個数で数えた範囲からいちばん下のボタンがはみ出して、
+ * そこだけ誰でも押せる状態になってしまう。
+ * 実際に置いてある「いちばん下のボタン」までを守る。
+ */
 function panelCheckRange_(sh) {
   const top = panelTop_(sh);
   if (!top) return null;
-  return sh.getRange(top, panelChkCol_(sh, top), Math.max(panelItems_().length, 1), 1);
+  const last = panelLastRow_(sh);
+  const n = Math.max((last ? last - top + 1 : panelItems_().length), 1);
+  return sh.getRange(top, panelChkCol_(sh, top), n, 1);
 }
 
 /**
@@ -1114,13 +1295,16 @@ function panelProtect_(sh) {
     const rg = panelCheckRange_(sh);
     if (!rg) return false;
     const a1 = rg.getA1Notation();
-    // 前にかけた同じ場所の保護が残っていたら、いったん外す
+    const DESC = "そうさボタン（作った人だけが押せます）";
+    // 前にかけた保護が残っていたら、いったん外す。
+    // 行が増えて範囲が変わっていることがあるので、場所だけでなく説明文でも見る
     sh.getProtections(SpreadsheetApp.ProtectionType.RANGE).forEach(function (p) {
       try {
-        if (p.getRange().getA1Notation() === a1 && p.canEdit()) p.remove();
+        if (!p.canEdit()) return;
+        if (p.getRange().getA1Notation() === a1 || p.getDescription() === DESC) p.remove();
       } catch (e) {}
     });
-    const p = rg.protect().setDescription("そうさボタン（作った人だけが押せます）");
+    const p = rg.protect().setDescription(DESC);
     const others = p.getEditors();
     if (others && others.length) p.removeEditors(others);
     if (p.canDomainEdit()) p.setDomainEdit(false);
@@ -1186,6 +1370,36 @@ function panelOnEdit(e) {
   } catch (err) { logErr_("panelOnEdit", err); }
 }
 
+/**
+ * コードを更新したあと、増えたボタンを自分で足す。
+ *
+ * 更新中に動いているのは「古いコード」なので、更新のその場では
+ * 新しいボタンのことを知らない。次に1分おきの見張りが動いたとき、
+ * そこではじめて新しいコードとして動く。そのときに足す。
+ * スマホからはメニューを開けないので、ここが自動でやらないと、
+ * 新しいボタンを永久に使えないままになってしまう。
+ */
+function panelAutoSync_(sh) {
+  const pr = PropertiesService.getScriptProperties();
+  if (pr.getProperty("PANEL_SETUP_VER") === UPD_VERSION) return;
+  try {
+    const head = panelHeadRow_(sh);
+    if (!head) { pr.setProperty("PANEL_SETUP_VER", UPD_VERSION); return; }
+    const added = panelSync_(sh, head);
+    const made  = panelEnsureInputs_(sh);
+    if (added || made) {
+      panelProtect_(sh);
+      panelSay_(sh, "🧰 新しいボタンを足しました（" +
+        panelItems_().slice(-Math.max(added, 1)).map(function (x) { return x.label; }).join("、") +
+        "）\n押す前に、すぐ上の「期間」と「送り先」を確かめてください。");
+    }
+    pr.setProperty("PANEL_SETUP_VER", UPD_VERSION);
+  } catch (e) {
+    logErr_("panelAutoSync", e);
+    pr.setProperty("PANEL_SETUP_VER", UPD_VERSION);   // 毎分やり直さない
+  }
+}
+
 /** 1分おきの見張り。onEdit が効かない機種のための保険 */
 function panelWatch() {
   try {
@@ -1199,6 +1413,11 @@ function panelWatch() {
     for (let i = 0; i < rows.length; i++) {
       if (rows[i].value === true) { panelRun_(rows[i].row); return; }   // 1回に1つだけ
     }
+
+    // コードが新しくなっていたら、増えたボタンをここで足す。
+    // 押されているものが無いときだけ。行を差し込むと下のボタンが動くので、
+    // 押した行と実際に動く行がずれてしまう
+    panelAutoSync_(sh);
   } catch (err) { logErr_("panelWatch", err); }
 }
 
@@ -1335,6 +1554,7 @@ function panelMarkStart_(row, item) {
   try {
     PropertiesService.getScriptProperties().setProperty("PANEL_RUNNING",
       JSON.stringify({ row: row, label: item.label, sec: item.sec || 60,
+                       stall: item.stall || PANEL_STALL_SEC,
                        at: new Date().getTime() }));
   } catch (e) {}
 }
@@ -1393,8 +1613,9 @@ function panelCheckStuck_(sh) {
 
   // 「始めてから」ではなく「最後に動きがあってから」で見る。
   // 時間のかかるものを、動いている最中に止まったと言ってしまわないように。
+  // 待ってよい長さは、ボタンによって違う（レポートは集計に何分もかかる）
   const quiet = Math.round((new Date().getTime() - (m.at || 0)) / 1000);
-  if (quiet < PANEL_STALL_SEC) return true;   // まだ息をしている。邪魔しない
+  if (quiet < (m.stall || PANEL_STALL_SEC)) return true;   // まだ息をしている。邪魔しない
 
   panelMarkEnd_();
   panelSay_(sh,

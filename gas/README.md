@@ -6,11 +6,11 @@
 
 | 記号 | ファイル | いま | Apps Script 側の名前 |
 |---|---|---|---|
-| **C** | `001-Code.gs`（統合スクリプト） | C023ver | `001-Code` |
-| **E** | `002-Extras.gs` | E004ver | `002-Extras` |
-| **L** | `003-LineReport.gs` | L005ver | `003-LineReport` |
-| **W** | `004-WebApp.gs`（みんなの記録ページ） | W006ver | `004-WebApp` |
-| **U** | `005-Updater.gs`（コードの自動更新・そうさボタン） | U007ver | `005-Updater` |
+| **C** | `001-Code.gs`（統合スクリプト） | C024ver | `001-Code` |
+| **E** | `002-Extras.gs` | E005ver | `002-Extras` |
+| **L** | `003-LineReport.gs` | L006ver | `003-LineReport` |
+| **W** | `004-WebApp.gs`（みんなの記録ページ） | W007ver | `004-WebApp` |
+| **U** | `005-Updater.gs`（コードの自動更新・そうさボタン） | U008ver | `005-Updater` |
 
 **貼るのはこの5つだけ。** 番号の順に並ぶので、上から順に貼っていけば漏れない。
 `gas/parts/` の中は、`002-Extras.gs` を組み立てるための材料なので貼らなくてよい。
@@ -25,7 +25,7 @@ Apps Script 上のファイル名も **`001-Code`** のようにそろえる（�
 `004-WebApp.gs` は `tools/build_webapp.py` で組み立てる。
 直すのは `gas/parts/WebApp.gs`（データを集める側）と
 `gas/parts/webapp.html`（画面）のほう。
-`gas/parts/Strategy.gs` / `Opucha.gs` / `ChartFit.gs` を直したら:
+`gas/parts/Strategy.gs` / `Opucha.gs` / `ChartFit.gs` / `MapLink.gs` を直したら:
 
 ```
 python3 tools/build_extras.py
@@ -40,7 +40,7 @@ python3 tools/build_extras.py
 
 | ファイル | 役割 | 状態 |
 |---|---|---|
-| `parts/MapLink.gs` | G列の乗り場名 → Googleマップへのリンク | 実装済み |
+| `parts/MapLink.gs` | G列の乗り場名 → Googleマップへのリンク | `002-Extras.gs` に同梱（E005ver〜） |
 | `parts/ChartFit.gs` | まとめスプシのグラフをZ列の幅にそろえる | 実装済み |
 | `003-LineReport.gs` | LINE画像(Flex)＋まとめスプシのレポート作成 | **v185からの抜粋** |
 | `002-Extras.gs` | 下の3つを1ファイルに束ねたもの（**貼るのはこれ1つでOK**） | 実装済み |
@@ -58,24 +58,16 @@ G列（乗り場）をタップするとGoogleマップが開くようにする�
 `=HYPERLINK()` の数式では**消える**。`formatTab_` が毎回 `setValues` でG列を書き戻すため。
 そこでリッチテキストのリンクとして貼り、整形の最後に貼り直す方式にしている。
 
-## 導入
+## 導入（E005ver 以降は、貼るだけで済みます）
 
-1. Apps Script に `gas/parts/MapLink.gs` を新規ファイルとして追加
-2. **統合スクリプトの `formatTab_` に1行足す**（これで貼りっぱなしになる）:
-
-```js
-  applyStyles_(sheet, out, meta);
-  applyMapLinks_(sheet);        // ← この行を追加
-```
-
-3. メニューに出す場合は `onOpen()` の `m4` に:
-
-```js
-    .addItem("🗺 乗り場にマップリンクを貼る", "menuMapLinksApply")
-    .addItem("🗺 マップの行き先を確認する", "menuMapLinksCheck")
-```
-
-2 を足さない場合は、整形のたびにリンクが消えるのでメニューから貼り直しが必要。
+- `002-Extras.gs`（E005ver〜）に同梱。単体で貼る必要はない。
+- `001-Code.gs`（C024ver〜）の `formatTab_` が、整形の最後に `applyMapLinks_(sheet)` を呼ぶ。
+  整形のたびに貼り直されるので、リンクが消えることはない。
+- 設定タブ「**乗り場にマップリンクを付ける**」を `いいえ` にすると貼らない。
+- メニューは `003-LineReport.gs`（L006ver〜）の `onOpenReport` が自動で並べる。
+- `004-WebApp.gs`（W007ver〜）の「みんなの記録ページ」でも、
+  記録カードと乗り場ランキングの乗り場名がタップでマップに飛ぶ。
+  1件ずつURLを持たせるとページが重くなるので、出てくる乗り場の種類ぶんだけを渡している。
 
 ## 行き先の決まり方
 
